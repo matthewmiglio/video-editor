@@ -7,7 +7,7 @@ from PIL import Image, ImageTk
 import cv2
 import numpy as np
 from main import (
-    mp4_to_webm, webm_to_mp4, convert_mp4_to_gif, mp4_to_mp3,
+    mp4_to_webm, webm_to_mp4, mkv_to_mp4, convert_mp4_to_gif, mp4_to_mp3,
     crop_video, get_subclip, speed_up_mp4_video, blur_video,
     stretch_video_dims, get_vid_dims, mute_video, get_video_duration
 )
@@ -17,10 +17,34 @@ class VideoEditorGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Video Editor")
-        self.root.geometry("900x700")
+        self.root.state('zoomed')
 
-        self.notebook = ttk.Notebook(root)
-        self.notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        # Define pastel colors for tabs
+        self.pastel_colors = [
+            '#FFE5E5',  # Pastel pink
+            '#E5F5FF',  # Pastel blue
+            '#E5FFE5',  # Pastel green
+            '#FFF5E5',  # Pastel orange
+            '#F5E5FF',  # Pastel purple
+            '#FFFFE5',  # Pastel yellow
+            '#FFE5F5'   # Pastel magenta
+        ]
+
+        # Create custom notebook with colored tabs
+        self.main_container = tk.Frame(root)
+        self.main_container.pack(fill='both', expand=True, padx=10, pady=10)
+
+        # Tab bar frame
+        self.tab_bar = tk.Frame(self.main_container, bg='#f0f0f0', height=50)
+        self.tab_bar.pack(fill='x', side='top')
+
+        # Content frame
+        self.content_frame = tk.Frame(self.main_container, bg='white')
+        self.content_frame.pack(fill='both', expand=True, side='top')
+
+        self.tabs = []
+        self.tab_buttons = []
+        self.current_tab_index = 0
 
         self.create_format_conversion_tab()
         self.create_crop_tab()
@@ -30,9 +54,72 @@ class VideoEditorGUI:
         self.create_resize_tab()
         self.create_audio_tab()
 
+        # Show first tab by default
+        self.show_tab(0)
+
+    def darken_color(self, hex_color, factor=0.15):
+        """Darken a hex color by a given factor (0-1)"""
+        # Remove the '#' if present
+        hex_color = hex_color.lstrip('#')
+
+        # Convert to RGB
+        r = int(hex_color[0:2], 16)
+        g = int(hex_color[2:4], 16)
+        b = int(hex_color[4:6], 16)
+
+        # Darken by reducing each component
+        r = int(r * (1 - factor))
+        g = int(g * (1 - factor))
+        b = int(b * (1 - factor))
+
+        # Convert back to hex
+        return f'#{r:02x}{g:02x}{b:02x}'
+
+    def add_tab(self, content_widget, title):
+        """Add a new tab with custom color"""
+        tab_index = len(self.tabs)
+        color = self.pastel_colors[tab_index % len(self.pastel_colors)]
+        darker_color = self.darken_color(color, 0.15)
+
+        # Create tab button
+        tab_btn = tk.Button(
+            self.tab_bar,
+            text=title,
+            font=('Arial', 14, 'bold'),
+            bg=color,
+            activebackground=darker_color,
+            relief='flat',
+            padx=20,
+            pady=10,
+            command=lambda idx=tab_index: self.show_tab(idx)
+        )
+        tab_btn.pack(side='left', padx=2)
+
+        self.tab_buttons.append(tab_btn)
+        self.tabs.append(content_widget)
+
+    def show_tab(self, index):
+        """Show the selected tab"""
+        # Hide all tabs
+        for tab in self.tabs:
+            tab.pack_forget()
+
+        # Update button colors
+        for i, btn in enumerate(self.tab_buttons):
+            color = self.pastel_colors[i % len(self.pastel_colors)]
+            if i == index:
+                darker_color = self.darken_color(color, 0.15)
+                btn.config(bg=darker_color, relief='sunken')
+            else:
+                btn.config(bg=color, relief='flat')
+
+        # Show selected tab
+        self.tabs[index].pack(fill='both', expand=True)
+        self.current_tab_index = index
+
     def create_format_conversion_tab(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="Format Conversion")
+        tab = tk.Frame(self.content_frame, bg='white')
+        self.add_tab(tab, "Format Conversion")
 
         ttk.Label(tab, text="Input Video:").grid(row=0, column=0, padx=10, pady=10, sticky='w')
         self.format_input_path = tk.StringVar()
@@ -101,7 +188,7 @@ class VideoEditorGUI:
     def browse_format_input(self):
         filename = filedialog.askopenfilename(
             title="Select Video File",
-            filetypes=[("Video files", "*.mp4 *.webm *.avi *.mov"), ("All files", "*.*")]
+            filetypes=[("Video files", "*.mp4 *.webm *.mkv *.avi *.mov"), ("All files", "*.*")]
         )
         if filename:
             self.format_input_path.set(filename)
@@ -122,7 +209,10 @@ class VideoEditorGUI:
                 if format_type == "WEBM":
                     output = mp4_to_webm(input_path, crf=self.webm_crf_var.get(), use_opus=self.use_opus_var.get())
                 elif format_type == "MP4":
-                    output = webm_to_mp4(input_path, crf=self.mp4_crf_var.get(), preset=self.mp4_preset_var.get())
+                    if input_path.lower().endswith('.mkv'):
+                        output = mkv_to_mp4(input_path, crf=self.mp4_crf_var.get(), preset=self.mp4_preset_var.get())
+                    else:
+                        output = webm_to_mp4(input_path, crf=self.mp4_crf_var.get(), preset=self.mp4_preset_var.get())
                 elif format_type == "GIF":
                     output = convert_mp4_to_gif(input_path)
                 elif format_type == "MP3":
@@ -139,8 +229,8 @@ class VideoEditorGUI:
         threading.Thread(target=convert_thread, daemon=True).start()
 
     def create_crop_tab(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="Crop Video")
+        tab = tk.Frame(self.content_frame, bg='white')
+        self.add_tab(tab, "Crop Video")
 
         ttk.Label(tab, text="Input Video:").grid(row=0, column=0, padx=10, pady=10, sticky='w')
         self.crop_input_path = tk.StringVar()
@@ -283,27 +373,32 @@ class VideoEditorGUI:
         threading.Thread(target=crop_thread, daemon=True).start()
 
     def create_trim_tab(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="Trim/Subclip")
+        tab = tk.Frame(self.content_frame, bg='white')
+        self.add_tab(tab, "Trim/Subclip")
 
-        ttk.Label(tab, text="Input Video:").grid(row=0, column=0, padx=10, pady=10, sticky='w')
+        # Top section - file selection
+        top_frame = ttk.Frame(tab)
+        top_frame.pack(fill='x', padx=10, pady=10)
+
+        ttk.Label(top_frame, text="Input Video:").pack(side='left', padx=5)
         self.trim_input_path = tk.StringVar()
-        ttk.Entry(tab, textvariable=self.trim_input_path, width=50).grid(row=0, column=1, padx=10, pady=10)
-        ttk.Button(tab, text="Browse", command=self.browse_trim_input).grid(row=0, column=2, padx=10, pady=10)
-
-        ttk.Button(tab, text="Load Video Info", command=self.load_trim_info).grid(row=1, column=0, columnspan=3, pady=10)
+        ttk.Entry(top_frame, textvariable=self.trim_input_path, width=50).pack(side='left', padx=5)
+        ttk.Button(top_frame, text="Browse", command=self.browse_trim_input).pack(side='left', padx=5)
+        ttk.Button(top_frame, text="Load Video Info", command=self.load_trim_info).pack(side='left', padx=5)
 
         self.trim_duration_var = tk.StringVar(value="Duration: Unknown")
-        ttk.Label(tab, textvariable=self.trim_duration_var, font=('Arial', 12, 'bold')).grid(row=2, column=0, columnspan=3, pady=10)
+        ttk.Label(top_frame, textvariable=self.trim_duration_var, font=('Arial', 10, 'bold')).pack(side='left', padx=10)
 
-        preview_frame = ttk.LabelFrame(tab, text="Preview Thumbnails")
-        preview_frame.grid(row=3, column=0, columnspan=3, padx=10, pady=10, sticky='ew')
+        # Main content - split into left and right
+        content_frame = ttk.Frame(tab)
+        content_frame.pack(fill='both', expand=True, padx=10, pady=5)
 
-        self.trim_preview_canvas = tk.Canvas(preview_frame, height=100, bg='lightgray')
-        self.trim_preview_canvas.pack(fill='both', expand=True, padx=5, pady=5)
+        # Left side - controls
+        left_frame = ttk.Frame(content_frame)
+        left_frame.pack(side='left', fill='both', expand=False, padx=(0, 10))
 
-        time_frame = ttk.LabelFrame(tab, text="Select Time Range")
-        time_frame.grid(row=4, column=0, columnspan=3, padx=10, pady=10, sticky='ew')
+        time_frame = ttk.LabelFrame(left_frame, text="Select Time Range")
+        time_frame.pack(fill='x', pady=5)
 
         ttk.Label(time_frame, text="Start Time (seconds):").grid(row=0, column=0, padx=10, pady=5, sticky='w')
         self.trim_start_var = tk.DoubleVar(value=0)
@@ -319,13 +414,31 @@ class VideoEditorGUI:
         self.trim_start_var.trace_add('write', self.update_trim_duration)
         self.trim_end_var.trace_add('write', self.update_trim_duration)
 
-        ttk.Button(tab, text="Trim Video", command=self.trim_video_action).grid(row=5, column=0, columnspan=3, pady=10)
+        ttk.Button(left_frame, text="Trim Video", command=self.trim_video_action).pack(fill='x', pady=10)
 
-        self.trim_progress = ttk.Progressbar(tab, mode='indeterminate')
-        self.trim_progress.grid(row=6, column=0, columnspan=3, padx=10, pady=10, sticky='ew')
+        self.trim_progress = ttk.Progressbar(left_frame, mode='indeterminate')
+        self.trim_progress.pack(fill='x', pady=5)
 
         self.trim_status = tk.StringVar(value="Ready")
-        ttk.Label(tab, textvariable=self.trim_status).grid(row=7, column=0, columnspan=3, pady=5)
+        ttk.Label(left_frame, textvariable=self.trim_status).pack(pady=5)
+
+        # Right side - preview
+        preview_frame = ttk.LabelFrame(content_frame, text="Video Scrubber Preview")
+        preview_frame.pack(side='right', fill='both', expand=True)
+
+        self.trim_preview_label = tk.Label(preview_frame, bg='black', width=60, height=25)
+        self.trim_preview_label.pack(padx=10, pady=10)
+
+        scrubber_frame = ttk.Frame(preview_frame)
+        scrubber_frame.pack(fill='x', padx=10, pady=(0, 10))
+
+        self.scrubber_var = tk.DoubleVar(value=0)
+        self.scrubber_time_label = tk.StringVar(value="00:00")
+
+        ttk.Label(scrubber_frame, textvariable=self.scrubber_time_label, font=('Arial', 10)).pack(pady=2)
+        self.scrubber_scale = ttk.Scale(scrubber_frame, from_=0, to=100, variable=self.scrubber_var,
+                                        orient='horizontal', command=self.on_scrubber_change)
+        self.scrubber_scale.pack(fill='x', pady=5)
 
     def browse_trim_input(self):
         filename = filedialog.askopenfilename(
@@ -347,42 +460,43 @@ class VideoEditorGUI:
             self.trim_duration_var.set(f"Duration: {duration:.2f} seconds ({self.format_time(duration)})")
             self.trim_end_var.set(duration)
 
-            self.load_trim_thumbnails(input_path, duration)
+            self.trim_video_cap = cv2.VideoCapture(input_path)
+            self.scrubber_scale.config(to=duration)
+            self.scrubber_var.set(0)
+            self.on_scrubber_change(0)
 
         except Exception as e:
             messagebox.showerror("Error", f"Could not load video info: {str(e)}")
 
-    def load_trim_thumbnails(self, video_path, duration):
-        self.trim_preview_canvas.delete("all")
+    def on_scrubber_change(self, value):
+        if not hasattr(self, 'trim_video_cap') or self.trim_video_cap is None:
+            return
 
-        cap = cv2.VideoCapture(video_path)
+        try:
+            timestamp = float(value)
+            self.scrubber_time_label.set(f"{timestamp:.2f}s")
 
-        num_thumbs = 5
-        thumb_width = 80
-        thumb_height = 60
-
-        for i in range(num_thumbs):
-            timestamp = (duration / (num_thumbs - 1)) * i if num_thumbs > 1 else 0
-            cap.set(cv2.CAP_PROP_POS_MSEC, timestamp * 1000)
-            ret, frame = cap.read()
+            self.trim_video_cap.set(cv2.CAP_PROP_POS_MSEC, timestamp * 1000)
+            ret, frame = self.trim_video_cap.read()
 
             if ret:
-                frame = cv2.resize(frame, (thumb_width, thumb_height))
+                max_width = 640
+                max_height = 360
+
+                h, w = frame.shape[:2]
+                scale = min(max_width / w, max_height / h)
+                new_w = int(w * scale)
+                new_h = int(h * scale)
+
+                frame = cv2.resize(frame, (new_w, new_h))
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 img = Image.fromarray(frame_rgb)
                 photo = ImageTk.PhotoImage(img)
 
-                x_pos = i * (thumb_width + 10) + 10
-                self.trim_preview_canvas.create_image(x_pos, 5, anchor='nw', image=photo)
-                self.trim_preview_canvas.create_text(x_pos + thumb_width//2, thumb_height + 10,
-                                                     text=self.format_time(timestamp),
-                                                     font=('Arial', 8))
-
-                if not hasattr(self, 'trim_thumb_photos'):
-                    self.trim_thumb_photos = []
-                self.trim_thumb_photos.append(photo)
-
-        cap.release()
+                self.trim_preview_label.config(image=photo, width=new_w, height=new_h)
+                self.trim_preview_label.image = photo
+        except Exception as e:
+            print(f"Error updating preview: {e}")
 
     def format_time(self, seconds):
         minutes = int(seconds // 60)
@@ -411,8 +525,18 @@ class VideoEditorGUI:
             messagebox.showerror("Error", "Start time must be less than end time")
             return
 
+        # Release the video capture before processing
+        if hasattr(self, 'trim_video_cap') and self.trim_video_cap is not None:
+            self.trim_video_cap.release()
+            self.trim_video_cap = None
+
         def trim_thread():
             try:
+                # Force garbage collection and wait to ensure file handles are released
+                import gc
+                gc.collect()
+                time.sleep(1.0)
+
                 self.trim_progress.start()
                 self.trim_status.set("Trimming video...")
 
@@ -429,8 +553,8 @@ class VideoEditorGUI:
         threading.Thread(target=trim_thread, daemon=True).start()
 
     def create_speed_tab(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="Speed Adjustment")
+        tab = tk.Frame(self.content_frame, bg='white')
+        self.add_tab(tab, "Speed Adjustment")
 
         ttk.Label(tab, text="Input Video:").grid(row=0, column=0, padx=10, pady=10, sticky='w')
         self.speed_input_path = tk.StringVar()
@@ -504,8 +628,8 @@ class VideoEditorGUI:
         threading.Thread(target=speed_thread, daemon=True).start()
 
     def create_blur_tab(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="Blur Region")
+        tab = tk.Frame(self.content_frame, bg='white')
+        self.add_tab(tab, "Blur Region")
 
         ttk.Label(tab, text="Input Video:").grid(row=0, column=0, padx=10, pady=10, sticky='w')
         self.blur_input_path = tk.StringVar()
@@ -646,8 +770,8 @@ class VideoEditorGUI:
         threading.Thread(target=blur_thread, daemon=True).start()
 
     def create_resize_tab(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="Resize/Stretch")
+        tab = tk.Frame(self.content_frame, bg='white')
+        self.add_tab(tab, "Resize/Stretch")
 
         ttk.Label(tab, text="Input Video:").grid(row=0, column=0, padx=10, pady=10, sticky='w')
         self.resize_input_path = tk.StringVar()
@@ -776,8 +900,8 @@ class VideoEditorGUI:
         threading.Thread(target=resize_thread, daemon=True).start()
 
     def create_audio_tab(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="Audio Operations")
+        tab = tk.Frame(self.content_frame, bg='white')
+        self.add_tab(tab, "Audio Operations")
 
         ttk.Label(tab, text="Input Video:").grid(row=0, column=0, padx=10, pady=10, sticky='w')
         self.audio_input_path = tk.StringVar()

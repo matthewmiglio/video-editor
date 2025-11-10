@@ -70,6 +70,25 @@ def webm_to_mp4(input_video_path, crf=20, preset="medium"):
     return output_path
 
 
+
+def mkv_to_mp4(input_video_path, crf=20, preset="medium"):
+    """
+    MKV -> MP4 (H.264 + AAC)
+    - Output path: same folder, same basename, .mp4 extension
+    """
+    base, _ = os.path.splitext(input_video_path)
+    output_path = base + ".mp4"
+    clip = VideoFileClip(input_video_path)
+    clip.write_videofile(
+        output_path,
+        codec="libx264",
+        audio=True,
+        audio_codec="aac",
+        ffmpeg_params=["-crf", str(crf), "-preset", preset],
+    )
+    return output_path
+
+
 def select_roi_from_video(video_path):
     cap = cv2.VideoCapture(video_path)
 
@@ -137,8 +156,8 @@ def crop_video(input_video_path, box, asyncly=False):
     def func():
         print(f"Cropping this video {os.path.basename(input_video_path)} to {box}")
         start_time = time.time()
-        output_video_path = input_video_path.replace(
-            ".mp4", f"_cropped_{box[0]}_{box[1]}_{box[2]}_{box[3]}.mp4"
+        temp_output_path = input_video_path.replace(
+            ".mp4", f"_cropped_temp_{box[0]}_{box[1]}_{box[2]}_{box[3]}.mp4"
         )
 
         left, top, right, bottom = box
@@ -148,7 +167,7 @@ def crop_video(input_video_path, box, asyncly=False):
         fps = int(cap.get(cv2.CAP_PROP_FPS))
 
         out = cv2.VideoWriter(
-            output_video_path, fourcc, fps, (right - left, bottom - top)
+            temp_output_path, fourcc, fps, (right - left, bottom - top)
         )
 
         while True:
@@ -160,11 +179,17 @@ def crop_video(input_video_path, box, asyncly=False):
 
         cap.release()
         out.release()
+
+        if os.path.exists(input_video_path):
+            os.remove(input_video_path)
+
+        os.rename(temp_output_path, input_video_path)
+
         time_taken = round((time.time() - start_time), 2)
         print(
-            f"Saved cropped video as {os.path.basename(output_video_path)} in {time_taken}s"
+            f"Saved cropped video as {os.path.basename(input_video_path)} in {time_taken}s (overwritten)"
         )
-        return output_video_path
+        return input_video_path
 
     if not asyncly:
         return func()
@@ -181,16 +206,43 @@ def get_subclip(input_video_path, start_time, end_time):
 
     print(f"Clipping video from {start_time}s to {end_time}s")
 
-    output_video_path = input_video_path.replace(
-        ".mp4", f"_subclip_{start_time}_{end_time}.mp4"
+    temp_output_path = input_video_path.replace(
+        ".mp4", f"_subclip_temp_{start_time}_{end_time}.mp4"
     )
 
-    clip = VideoFileClip(input_video_path).subclip(start_time, end_time)
-    clip.write_videofile(output_video_path, codec="libx264")
-    time_taken = round((time.time() - subclip_start_time), 2)
-    print(f"Saved subclip as {os.path.basename(output_video_path)} in {time_taken}s")
+    clip = VideoFileClip(input_video_path)
+    subclip = clip.subclipped(start_time, end_time)
+    subclip.write_videofile(temp_output_path, codec="libx264")
 
-    return output_video_path
+    # Close both clips to release file handles
+    subclip.close()
+    clip.close()
+
+    # Force garbage collection and wait for file handles to be released
+    import gc
+    import time as time_module
+    gc.collect()
+    time_module.sleep(1.5)
+
+    # Retry logic for file operations
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            if os.path.exists(input_video_path):
+                os.remove(input_video_path)
+            os.rename(temp_output_path, input_video_path)
+            break
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                print(f"File locked, retrying in 1 second... (attempt {attempt + 1}/{max_retries})")
+                time_module.sleep(1)
+            else:
+                raise Exception(f"Could not access file after {max_retries} attempts. Please close any programs using the video file.") from e
+
+    time_taken = round((time.time() - subclip_start_time), 2)
+    print(f"Saved subclip as {os.path.basename(input_video_path)} in {time_taken}s (overwritten)")
+
+    return input_video_path
 
 
 def convert_mp4_to_gif(input_video_path):
@@ -209,13 +261,20 @@ def convert_mp4_to_gif(input_video_path):
 def speed_up_mp4_video(input_video_path, speed_factor: float):
     start_time = time.time()
 
-    output_video_path = input_video_path.replace(".mp4", f"_sped_up_{speed_factor}.mp4")
+    temp_output_path = input_video_path.replace(".mp4", f"_sped_temp_{speed_factor}.mp4")
     clip = VideoFileClip(input_video_path).fx(vfx.speedx, speed_factor)
-    clip.write_videofile(output_video_path, codec="libx264")
-    time_taken = round((time.time() - start_time), 2)
-    print(f"Saved sped video as {os.path.basename(output_video_path)} in {time_taken}s")
+    clip.write_videofile(temp_output_path, codec="libx264")
+    clip.close()
 
-    return output_video_path
+    if os.path.exists(input_video_path):
+        os.remove(input_video_path)
+
+    os.rename(temp_output_path, input_video_path)
+
+    time_taken = round((time.time() - start_time), 2)
+    print(f"Saved sped video as {os.path.basename(input_video_path)} in {time_taken}s (overwritten)")
+
+    return input_video_path
 
 
 def blur_video(video_path, region):
@@ -235,12 +294,12 @@ def blur_video(video_path, region):
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    # Create the output video path
+    # Create the temp output video path
     base, ext = os.path.splitext(video_path)
-    output_path = f"{base}_blurred{ext}"
+    temp_output_path = f"{base}_blurred_temp{ext}"
 
     # Create the VideoWriter object
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    out = cv2.VideoWriter(temp_output_path, fourcc, fps, (width, height))
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -262,8 +321,14 @@ def blur_video(video_path, region):
     cap.release()
     out.release()
     cv2.destroyAllWindows()
-    print(f"blurred this video: {os.path.basename(video_path)}!")
-    return output_path
+
+    if os.path.exists(video_path):
+        os.remove(video_path)
+
+    os.rename(temp_output_path, video_path)
+
+    print(f"blurred this video: {os.path.basename(video_path)}! (overwritten)")
+    return video_path
 
 
 def get_vid_dims(video_path):
@@ -276,11 +341,11 @@ def get_vid_dims(video_path):
 
 def stretch_video_dims(video_path, new_x, new_y):
     print(f"Stretching {os.path.basename(video_path)} to {new_x}x{new_y}")
-    out_video_path = video_path.replace(".mp4", f"_stretched_{new_x}_{new_y}.mp4")
+    temp_video_path = video_path.replace(".mp4", f"_stretched_temp_{new_x}_{new_y}.mp4")
     cap = cv2.VideoCapture(video_path)
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     fps = int(cap.get(cv2.CAP_PROP_FPS))
-    out = cv2.VideoWriter(out_video_path, fourcc, fps, (new_x, new_y))
+    out = cv2.VideoWriter(temp_video_path, fourcc, fps, (new_x, new_y))
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -289,7 +354,14 @@ def stretch_video_dims(video_path, new_x, new_y):
         out.write(frame)
     cap.release()
     out.release()
-    return out_video_path
+
+    if os.path.exists(video_path):
+        os.remove(video_path)
+
+    os.rename(temp_video_path, video_path)
+
+    print(f"Stretched video saved as {os.path.basename(video_path)} (overwritten)")
+    return video_path
 
 
 def get_video_duration(video_path):
@@ -309,10 +381,17 @@ def mute_video(video_path):
     clip = VideoFileClip(video_path)
     audio = clip.audio
     if audio:
-        audio = audio.volumex(0)  # Mute the audio
-        output_path = video_path.replace(".mp4", "_muted.mp4")
-        clip.set_audio(audio).write_videofile(output_path, codec="libx264")
-        return output_path
+        audio = audio.volumex(0)
+        temp_output_path = video_path.replace(".mp4", "_muted_temp.mp4")
+        clip.set_audio(audio).write_videofile(temp_output_path, codec="libx264")
+        clip.close()
+
+        if os.path.exists(video_path):
+            os.remove(video_path)
+
+        os.rename(temp_output_path, video_path)
+        print(f"Muted video saved (overwritten)")
+        return video_path
     else:
         print("No audio track found in the video.")
         return video_path
