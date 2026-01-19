@@ -397,6 +397,49 @@ def mute_video(video_path):
         return video_path
 
 
+def adjust_brightness_video(video_path, brightness_factor):
+    """
+    Adjust brightness of a video in place.
+    brightness_factor: float, 1.0 = no change, >1.0 = brighter, <1.0 = darker
+    """
+    print(f"Adjusting brightness of {os.path.basename(video_path)} by factor {brightness_factor}")
+    start_time = time.time()
+
+    base, ext = os.path.splitext(video_path)
+    temp_output_path = f"{base}_brightness_temp{ext}"
+
+    cap = cv2.VideoCapture(video_path)
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    out = cv2.VideoWriter(temp_output_path, fourcc, fps, (width, height))
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Convert to float, apply brightness, clip to valid range, convert back
+        adjusted = frame.astype(np.float32) * brightness_factor
+        adjusted = np.clip(adjusted, 0, 255).astype(np.uint8)
+
+        out.write(adjusted)
+
+    cap.release()
+    out.release()
+
+    if os.path.exists(video_path):
+        os.remove(video_path)
+
+    os.rename(temp_output_path, video_path)
+
+    time_taken = round((time.time() - start_time), 2)
+    print(f"Brightness adjusted video saved as {os.path.basename(video_path)} in {time_taken}s (overwritten)")
+    return video_path
+
+
 if __name__ == "__main__":
     file_path = r"C:\Users\matmi\Downloads\Untitled video - Made with Clipchamp (4).mp4"
     print(f'    Processing file: {file_path}')

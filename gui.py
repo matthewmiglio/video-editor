@@ -1,15 +1,17 @@
 import os
 import time
+import random
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageEnhance
 import cv2
 import numpy as np
 from main import (
     mp4_to_webm, webm_to_mp4, mkv_to_mp4, convert_mp4_to_gif, mp4_to_mp3,
     crop_video, get_subclip, speed_up_mp4_video, blur_video,
-    stretch_video_dims, get_vid_dims, mute_video, get_video_duration
+    stretch_video_dims, get_vid_dims, mute_video, get_video_duration,
+    adjust_brightness_video
 )
 
 
@@ -53,6 +55,7 @@ class VideoEditorGUI:
         self.create_blur_tab()
         self.create_resize_tab()
         self.create_audio_tab()
+        self.create_brightness_tab()
 
         # Show first tab by default
         self.show_tab(0)
@@ -976,6 +979,207 @@ class VideoEditorGUI:
                 messagebox.showerror("Error", f"Audio extraction failed: {str(e)}")
 
         threading.Thread(target=extract_thread, daemon=True).start()
+
+    def create_brightness_tab(self):
+        tab = tk.Frame(self.content_frame, bg='white')
+        self.add_tab(tab, "Brightness Editor")
+
+        # Top section - file selection
+        top_frame = ttk.Frame(tab)
+        top_frame.pack(fill='x', padx=10, pady=10)
+
+        ttk.Label(top_frame, text="Input Video:").pack(side='left', padx=5)
+        self.brightness_input_path = tk.StringVar()
+        ttk.Entry(top_frame, textvariable=self.brightness_input_path, width=50).pack(side='left', padx=5)
+        ttk.Button(top_frame, text="Browse", command=self.browse_brightness_input).pack(side='left', padx=5)
+        ttk.Button(top_frame, text="Load Random Frame", command=self.load_brightness_preview).pack(side='left', padx=5)
+
+        # Main content - split into left (original) and right (preview)
+        content_frame = ttk.Frame(tab)
+        content_frame.pack(fill='both', expand=True, padx=10, pady=5)
+
+        # Left side - Original frame
+        left_frame = ttk.LabelFrame(content_frame, text="Original Frame")
+        left_frame.pack(side='left', fill='both', expand=True, padx=(0, 5))
+
+        self.brightness_original_label = tk.Label(left_frame, bg='black', width=50, height=20)
+        self.brightness_original_label.pack(padx=10, pady=10, fill='both', expand=True)
+
+        # Right side - Adjusted preview
+        right_frame = ttk.LabelFrame(content_frame, text="Brightness Adjusted Preview")
+        right_frame.pack(side='right', fill='both', expand=True, padx=(5, 0))
+
+        self.brightness_preview_label = tk.Label(right_frame, bg='black', width=50, height=20)
+        self.brightness_preview_label.pack(padx=10, pady=10, fill='both', expand=True)
+
+        # Controls section
+        controls_frame = ttk.Frame(tab)
+        controls_frame.pack(fill='x', padx=10, pady=10)
+
+        # Brightness slider
+        slider_frame = ttk.LabelFrame(controls_frame, text="Brightness Adjustment")
+        slider_frame.pack(fill='x', pady=5)
+
+        ttk.Label(slider_frame, text="Darker").pack(side='left', padx=10)
+
+        self.brightness_var = tk.DoubleVar(value=1.0)
+        self.brightness_scale = ttk.Scale(
+            slider_frame, from_=0.2, to=10.0, variable=self.brightness_var,
+            orient='horizontal', length=400, command=self.on_brightness_change
+        )
+        self.brightness_scale.pack(side='left', fill='x', expand=True, padx=10)
+
+        ttk.Label(slider_frame, text="Brighter").pack(side='left', padx=10)
+
+        self.brightness_value_label = ttk.Label(slider_frame, text="1.00x", width=8)
+        self.brightness_value_label.pack(side='left', padx=10)
+
+        # Preset buttons
+        presets_frame = ttk.Frame(slider_frame)
+        presets_frame.pack(side='left', padx=10)
+
+        for preset in [0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 10.0]:
+            text = f"{preset}x"
+            ttk.Button(presets_frame, text=text, width=5,
+                      command=lambda p=preset: self.set_brightness_preset(p)).pack(side='left', padx=2)
+
+        # Save button and progress
+        button_frame = ttk.Frame(tab)
+        button_frame.pack(fill='x', padx=10, pady=10)
+
+        ttk.Button(button_frame, text="SAVE", command=self.save_brightness_video,
+                  style='Accent.TButton').pack(pady=10)
+
+        self.brightness_progress = ttk.Progressbar(button_frame, mode='indeterminate')
+        self.brightness_progress.pack(fill='x', pady=5)
+
+        self.brightness_status = tk.StringVar(value="Ready - Load a video to begin")
+        ttk.Label(button_frame, textvariable=self.brightness_status).pack(pady=5)
+
+        # Store original frame for preview updates
+        self.brightness_original_frame = None
+        self.brightness_original_pil = None
+
+    def browse_brightness_input(self):
+        filename = filedialog.askopenfilename(
+            title="Select Video File",
+            filetypes=[("Video files", "*.mp4 *.webm *.avi *.mov"), ("All files", "*.*")]
+        )
+        if filename:
+            self.brightness_input_path.set(filename)
+
+    def load_brightness_preview(self):
+        input_path = self.brightness_input_path.get()
+        if not input_path or not os.path.exists(input_path):
+            messagebox.showerror("Error", "Please select a valid input video")
+            return
+
+        cap = cv2.VideoCapture(input_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        if total_frames <= 0:
+            messagebox.showerror("Error", "Could not read video frames")
+            cap.release()
+            return
+
+        # Get a random frame
+        random_frame_idx = random.randint(0, total_frames - 1)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, random_frame_idx)
+        ret, frame = cap.read()
+        cap.release()
+
+        if not ret:
+            messagebox.showerror("Error", "Could not read video frame")
+            return
+
+        # Store original frame for brightness adjustments
+        self.brightness_original_frame = frame
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        self.brightness_original_pil = Image.fromarray(frame_rgb)
+
+        # Resize for display
+        max_width = 400
+        max_height = 300
+        h, w = frame.shape[:2]
+        scale = min(max_width / w, max_height / h, 1.0)
+        new_w = int(w * scale)
+        new_h = int(h * scale)
+
+        # Display original frame
+        display_pil = self.brightness_original_pil.resize((new_w, new_h), Image.LANCZOS)
+        photo = ImageTk.PhotoImage(display_pil)
+        self.brightness_original_label.config(image=photo, width=new_w, height=new_h)
+        self.brightness_original_label.image = photo
+
+        # Reset brightness slider
+        self.brightness_var.set(1.0)
+        self.brightness_value_label.config(text="1.00x")
+
+        # Update preview
+        self.update_brightness_preview()
+
+        self.brightness_status.set(f"Loaded random frame #{random_frame_idx + 1} of {total_frames}")
+
+    def on_brightness_change(self, value):
+        self.brightness_value_label.config(text=f"{float(value):.2f}x")
+        self.update_brightness_preview()
+
+    def set_brightness_preset(self, preset):
+        self.brightness_var.set(preset)
+        self.brightness_value_label.config(text=f"{preset:.2f}x")
+        self.update_brightness_preview()
+
+    def update_brightness_preview(self):
+        if self.brightness_original_pil is None:
+            return
+
+        brightness_factor = self.brightness_var.get()
+
+        # Apply brightness using PIL ImageEnhance
+        enhancer = ImageEnhance.Brightness(self.brightness_original_pil)
+        adjusted_pil = enhancer.enhance(brightness_factor)
+
+        # Resize for display
+        max_width = 400
+        max_height = 300
+        w, h = adjusted_pil.size
+        scale = min(max_width / w, max_height / h, 1.0)
+        new_w = int(w * scale)
+        new_h = int(h * scale)
+
+        display_pil = adjusted_pil.resize((new_w, new_h), Image.LANCZOS)
+        photo = ImageTk.PhotoImage(display_pil)
+        self.brightness_preview_label.config(image=photo, width=new_w, height=new_h)
+        self.brightness_preview_label.image = photo
+
+    def save_brightness_video(self):
+        input_path = self.brightness_input_path.get()
+        if not input_path or not os.path.exists(input_path):
+            messagebox.showerror("Error", "Please select a valid input video")
+            return
+
+        brightness_factor = self.brightness_var.get()
+
+        if brightness_factor == 1.0:
+            messagebox.showinfo("Info", "Brightness is at 1.0x (no change). Adjust the slider to modify brightness.")
+            return
+
+        def save_thread():
+            try:
+                self.brightness_progress.start()
+                self.brightness_status.set(f"Applying {brightness_factor:.2f}x brightness...")
+
+                output = adjust_brightness_video(input_path, brightness_factor)
+
+                self.brightness_progress.stop()
+                self.brightness_status.set(f"Done! Saved in place: {os.path.basename(output)}")
+                messagebox.showinfo("Success", f"Brightness adjustment complete!\nVideo saved in place:\n{output}")
+            except Exception as e:
+                self.brightness_progress.stop()
+                self.brightness_status.set("Error occurred")
+                messagebox.showerror("Error", f"Brightness adjustment failed: {str(e)}")
+
+        threading.Thread(target=save_thread, daemon=True).start()
 
 
 if __name__ == "__main__":
