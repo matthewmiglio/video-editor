@@ -124,10 +124,34 @@ class VideoEditorGUI:
         tab = tk.Frame(self.content_frame, bg='white')
         self.add_tab(tab, "Format Conversion")
 
-        ttk.Label(tab, text="Input Video:").grid(row=0, column=0, padx=10, pady=10, sticky='w')
-        self.format_input_path = tk.StringVar()
-        ttk.Entry(tab, textvariable=self.format_input_path, width=50).grid(row=0, column=1, padx=10, pady=10)
-        ttk.Button(tab, text="Browse", command=self.browse_format_input).grid(row=0, column=2, padx=10, pady=10)
+        # File selection frame
+        file_frame = ttk.LabelFrame(tab, text="Input Videos (batch conversion)")
+        file_frame.grid(row=0, column=0, columnspan=3, padx=10, pady=10, sticky='nsew')
+
+        # Listbox for selected files
+        list_frame = ttk.Frame(file_frame)
+        list_frame.pack(fill='both', expand=True, padx=5, pady=5)
+
+        self.format_file_listbox = tk.Listbox(list_frame, height=6, selectmode=tk.EXTENDED)
+        self.format_file_listbox.pack(side='left', fill='both', expand=True)
+
+        scrollbar = ttk.Scrollbar(list_frame, orient='vertical', command=self.format_file_listbox.yview)
+        scrollbar.pack(side='right', fill='y')
+        self.format_file_listbox.config(yscrollcommand=scrollbar.set)
+
+        # Buttons for file management
+        btn_frame = ttk.Frame(file_frame)
+        btn_frame.pack(fill='x', padx=5, pady=5)
+
+        ttk.Button(btn_frame, text="Add Files", command=self.browse_format_input).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Remove Selected", command=self.remove_format_files).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Clear All", command=self.clear_format_files).pack(side='left', padx=5)
+
+        self.format_file_count = tk.StringVar(value="0 files selected")
+        ttk.Label(btn_frame, textvariable=self.format_file_count).pack(side='right', padx=10)
+
+        # Store the list of file paths
+        self.format_input_files = []
 
         ttk.Label(tab, text="Output Format:").grid(row=1, column=0, padx=10, pady=10, sticky='w')
         self.format_output_type = tk.StringVar(value="WEBM")
@@ -151,9 +175,9 @@ class VideoEditorGUI:
         self.mp4_crf_var = tk.IntVar(value=20)
         self.mp4_preset_var = tk.StringVar(value="medium")
 
-        ttk.Button(tab, text="Convert", command=self.convert_format).grid(row=3, column=0, columnspan=3, pady=20)
+        ttk.Button(tab, text="Convert All", command=self.convert_format).grid(row=3, column=0, columnspan=3, pady=20)
 
-        self.format_progress = ttk.Progressbar(tab, mode='indeterminate')
+        self.format_progress = ttk.Progressbar(tab, mode='determinate')
         self.format_progress.grid(row=4, column=0, columnspan=3, padx=10, pady=10, sticky='ew')
 
         self.format_status = tk.StringVar(value="Ready")
@@ -189,43 +213,99 @@ class VideoEditorGUI:
             ttk.Label(self.format_options_frame, text="Audio will be extracted to MP3 format").grid(row=0, column=0, padx=10, pady=5)
 
     def browse_format_input(self):
-        filename = filedialog.askopenfilename(
-            title="Select Video File",
+        filenames = filedialog.askopenfilenames(
+            title="Select Video Files",
             filetypes=[("Video files", "*.mp4 *.webm *.mkv *.avi *.mov"), ("All files", "*.*")]
         )
-        if filename:
-            self.format_input_path.set(filename)
+        if filenames:
+            # Check if all files have the same extension
+            extensions = set(os.path.splitext(f)[1].lower() for f in filenames)
+
+            if self.format_input_files:
+                # Check against existing files
+                existing_ext = os.path.splitext(self.format_input_files[0])[1].lower()
+                if len(extensions) > 1 or (len(extensions) == 1 and list(extensions)[0] != existing_ext):
+                    messagebox.showerror("Error", "All input files must have the same format/extension")
+                    return
+            elif len(extensions) > 1:
+                messagebox.showerror("Error", "All input files must have the same format/extension")
+                return
+
+            # Add new files (avoid duplicates)
+            for f in filenames:
+                if f not in self.format_input_files:
+                    self.format_input_files.append(f)
+                    self.format_file_listbox.insert(tk.END, os.path.basename(f))
+
+            self.format_file_count.set(f"{len(self.format_input_files)} file(s) selected")
+
+    def remove_format_files(self):
+        selected = list(self.format_file_listbox.curselection())
+        for idx in reversed(selected):
+            self.format_file_listbox.delete(idx)
+            del self.format_input_files[idx]
+        self.format_file_count.set(f"{len(self.format_input_files)} file(s) selected")
+
+    def clear_format_files(self):
+        self.format_file_listbox.delete(0, tk.END)
+        self.format_input_files = []
+        self.format_file_count.set("0 files selected")
 
     def convert_format(self):
-        input_path = self.format_input_path.get()
-        if not input_path or not os.path.exists(input_path):
-            messagebox.showerror("Error", "Please select a valid input video")
+        if not self.format_input_files:
+            messagebox.showerror("Error", "Please select at least one input video")
             return
+
+        # Validate all files exist
+        for f in self.format_input_files:
+            if not os.path.exists(f):
+                messagebox.showerror("Error", f"File not found: {f}")
+                return
 
         def convert_thread():
             try:
-                self.format_progress.start()
-                self.format_status.set("Converting...")
-
+                total = len(self.format_input_files)
                 format_type = self.format_output_type.get()
+                successful = []
+                failed = []
 
-                if format_type == "WEBM":
-                    output = mp4_to_webm(input_path, crf=self.webm_crf_var.get(), use_opus=self.use_opus_var.get())
-                elif format_type == "MP4":
-                    if input_path.lower().endswith('.mkv'):
-                        output = mkv_to_mp4(input_path, crf=self.mp4_crf_var.get(), preset=self.mp4_preset_var.get())
-                    else:
-                        output = webm_to_mp4(input_path, crf=self.mp4_crf_var.get(), preset=self.mp4_preset_var.get())
-                elif format_type == "GIF":
-                    output = convert_mp4_to_gif(input_path)
-                elif format_type == "MP3":
-                    output = mp4_to_mp3(input_path)
+                self.format_progress['maximum'] = total
+                self.format_progress['value'] = 0
 
-                self.format_progress.stop()
-                self.format_status.set(f"Done! Saved to: {os.path.basename(output)}")
-                messagebox.showinfo("Success", f"Conversion complete!\n{output}")
+                for i, input_path in enumerate(self.format_input_files):
+                    self.format_status.set(f"Converting {i+1}/{total}: {os.path.basename(input_path)}")
+
+                    try:
+                        if format_type == "WEBM":
+                            output = mp4_to_webm(input_path, crf=self.webm_crf_var.get(), use_opus=self.use_opus_var.get())
+                        elif format_type == "MP4":
+                            if input_path.lower().endswith('.mkv'):
+                                output = mkv_to_mp4(input_path, crf=self.mp4_crf_var.get(), preset=self.mp4_preset_var.get())
+                            else:
+                                output = webm_to_mp4(input_path, crf=self.mp4_crf_var.get(), preset=self.mp4_preset_var.get())
+                        elif format_type == "GIF":
+                            output = convert_mp4_to_gif(input_path)
+                        elif format_type == "MP3":
+                            output = mp4_to_mp3(input_path)
+                        successful.append(output)
+                    except Exception as e:
+                        failed.append((input_path, str(e)))
+
+                    self.format_progress['value'] = i + 1
+
+                self.format_progress['value'] = total
+
+                if failed:
+                    self.format_status.set(f"Done with errors: {len(successful)} succeeded, {len(failed)} failed")
+                    error_details = "\n".join([f"{os.path.basename(f)}: {e}" for f, e in failed])
+                    messagebox.showwarning("Partial Success",
+                                          f"Converted {len(successful)}/{total} files.\n\nFailed:\n{error_details}")
+                else:
+                    self.format_status.set(f"Done! Converted {total} file(s)")
+                    messagebox.showinfo("Success", f"Batch conversion complete!\n{total} file(s) converted.")
+
             except Exception as e:
-                self.format_progress.stop()
+                self.format_progress['value'] = 0
                 self.format_status.set("Error occurred")
                 messagebox.showerror("Error", f"Conversion failed: {str(e)}")
 
