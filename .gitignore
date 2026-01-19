@@ -65,3 +65,7 @@ dmypy.json
 
 # pyenv
 .python-version
+
+# temp files
+*.mp4
+*.mp3
