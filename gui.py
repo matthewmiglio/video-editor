@@ -23,13 +23,13 @@ class VideoEditorGUI:
 
         # Define pastel colors for tabs
         self.pastel_colors = [
-            '#FFE5E5',  # Pastel pink
-            '#E5F5FF',  # Pastel blue
-            '#E5FFE5',  # Pastel green
-            '#FFF5E5',  # Pastel orange
-            '#F5E5FF',  # Pastel purple
-            '#FFFFE5',  # Pastel yellow
-            '#FFE5F5'   # Pastel magenta
+            '#FFB3B3',  # Pastel pink
+            '#B3DFFF',  # Pastel blue
+            '#B3FFB3',  # Pastel green
+            '#FFE0B3',  # Pastel orange
+            '#E0B3FF',  # Pastel purple
+            '#FFFFB3',  # Pastel yellow
+            '#FFB3E0'   # Pastel magenta
         ]
 
         # Create custom notebook with colored tabs
