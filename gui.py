@@ -315,15 +315,30 @@ class VideoEditorGUI:
         tab = tk.Frame(self.content_frame, bg='white')
         self.add_tab(tab, "Crop Video")
 
-        ttk.Label(tab, text="Input Video:").grid(row=0, column=0, padx=10, pady=10, sticky='w')
+        # Initialize crop job queue
+        self.crop_jobs = []
+        self.crop_job_id = 0
+
+        # Top section - file selection
+        top_frame = ttk.Frame(tab)
+        top_frame.pack(fill='x', padx=10, pady=10)
+
+        ttk.Label(top_frame, text="Input Video:").pack(side='left', padx=5)
         self.crop_input_path = tk.StringVar()
-        ttk.Entry(tab, textvariable=self.crop_input_path, width=50).grid(row=0, column=1, padx=10, pady=10)
-        ttk.Button(tab, text="Browse", command=self.browse_crop_input).grid(row=0, column=2, padx=10, pady=10)
+        ttk.Entry(top_frame, textvariable=self.crop_input_path, width=50).pack(side='left', padx=5)
+        ttk.Button(top_frame, text="Browse", command=self.browse_crop_input).pack(side='left', padx=5)
+        ttk.Button(top_frame, text="Load Preview", command=self.load_crop_preview).pack(side='left', padx=5)
 
-        ttk.Button(tab, text="Load Preview", command=self.load_crop_preview).grid(row=1, column=0, columnspan=3, pady=10)
+        # Main content frame
+        content_frame = ttk.Frame(tab)
+        content_frame.pack(fill='both', expand=True, padx=10, pady=5)
 
-        self.crop_canvas_frame = ttk.Frame(tab)
-        self.crop_canvas_frame.grid(row=2, column=0, columnspan=3, padx=10, pady=10)
+        # Left side - preview and controls
+        left_frame = ttk.Frame(content_frame)
+        left_frame.pack(side='left', fill='both', expand=True, padx=(0, 10))
+
+        self.crop_canvas_frame = ttk.Frame(left_frame)
+        self.crop_canvas_frame.pack(pady=5)
 
         self.crop_canvas = tk.Canvas(self.crop_canvas_frame, width=640, height=360, bg='gray')
         self.crop_canvas.pack()
@@ -339,20 +354,32 @@ class VideoEditorGUI:
         self.crop_canvas.bind("<B1-Motion>", self.on_crop_drag)
         self.crop_canvas.bind("<ButtonRelease-1>", self.on_crop_release)
 
-        coords_frame = ttk.Frame(tab)
-        coords_frame.grid(row=3, column=0, columnspan=3, pady=10)
+        controls_frame = ttk.Frame(left_frame)
+        controls_frame.pack(fill='x', pady=10)
 
-        ttk.Label(coords_frame, text="Crop Region:").pack(side='left', padx=5)
+        ttk.Label(controls_frame, text="Crop Region:").pack(side='left', padx=5)
         self.crop_coords = tk.StringVar(value="Not selected")
-        ttk.Label(coords_frame, textvariable=self.crop_coords).pack(side='left', padx=5)
+        ttk.Label(controls_frame, textvariable=self.crop_coords).pack(side='left', padx=5)
 
-        ttk.Button(tab, text="Crop Video", command=self.crop_video_action).grid(row=4, column=0, columnspan=3, pady=10)
+        ttk.Button(controls_frame, text="Add to Queue", command=self.add_crop_to_queue).pack(side='left', padx=20)
 
-        self.crop_progress = ttk.Progressbar(tab, mode='indeterminate')
-        self.crop_progress.grid(row=5, column=0, columnspan=3, padx=10, pady=10, sticky='ew')
+        self.crop_status = tk.StringVar(value="Ready - Load a video and select crop region")
+        ttk.Label(left_frame, textvariable=self.crop_status).pack(pady=5)
 
-        self.crop_status = tk.StringVar(value="Ready")
-        ttk.Label(tab, textvariable=self.crop_status).grid(row=6, column=0, columnspan=3, pady=5)
+        # Right side - Job Queue
+        queue_frame = ttk.LabelFrame(content_frame, text="Processing Queue")
+        queue_frame.pack(side='right', fill='both', expand=False)
+
+        self.crop_queue_listbox = tk.Listbox(queue_frame, width=40, height=12, font=('Consolas', 9))
+        self.crop_queue_listbox.pack(fill='both', expand=True, padx=5, pady=5)
+
+        queue_btn_frame = ttk.Frame(queue_frame)
+        queue_btn_frame.pack(fill='x', padx=5, pady=5)
+
+        ttk.Button(queue_btn_frame, text="Clear Completed", command=self.clear_completed_crop_jobs).pack(side='left', padx=2)
+
+        self.crop_queue_status = tk.StringVar(value="Queue: 0 jobs")
+        ttk.Label(queue_frame, textvariable=self.crop_queue_status).pack(pady=5)
 
     def browse_crop_input(self):
         filename = filedialog.askopenfilename(
@@ -431,29 +458,94 @@ class VideoEditorGUI:
         self.crop_box = (orig_x1, orig_y1, orig_x2, orig_y2)
         self.crop_coords.set(f"({orig_x1}, {orig_y1}, {orig_x2}, {orig_y2})")
 
-    def crop_video_action(self):
+    def add_crop_to_queue(self):
         if not hasattr(self, 'crop_box'):
             messagebox.showerror("Error", "Please select a crop region first")
             return
 
         input_path = self.crop_input_path.get()
+        if not input_path or not os.path.exists(input_path):
+            messagebox.showerror("Error", "Please select a valid input video")
+            return
 
+        # Create job entry
+        self.crop_job_id += 1
+        job = {
+            'id': self.crop_job_id,
+            'input_path': input_path,
+            'crop_box': self.crop_box,
+            'status': 'queued',
+            'filename': os.path.basename(input_path)
+        }
+        self.crop_jobs.append(job)
+
+        # Update display
+        self.update_crop_queue_display()
+
+        # Start processing this job
+        self.process_crop_job(job)
+
+        box = self.crop_box
+        self.crop_status.set(f"Added to queue: {job['filename']} ({box[2]-box[0]}x{box[3]-box[1]})")
+
+    def process_crop_job(self, job):
         def crop_thread():
             try:
-                self.crop_progress.start()
-                self.crop_status.set("Cropping video...")
+                import gc
+                gc.collect()
+                time.sleep(0.5)
 
-                output = crop_video(input_path, self.crop_box)
+                job['status'] = 'processing'
+                self.root.after(0, self.update_crop_queue_display)
 
-                self.crop_progress.stop()
-                self.crop_status.set(f"Done! Saved to: {os.path.basename(output)}")
-                messagebox.showinfo("Success", f"Crop complete!\n{output}")
+                output = crop_video(job['input_path'], job['crop_box'])
+
+                job['status'] = 'done'
+                job['output'] = output
+                self.root.after(0, self.update_crop_queue_display)
+
             except Exception as e:
-                self.crop_progress.stop()
-                self.crop_status.set("Error occurred")
-                messagebox.showerror("Error", f"Crop failed: {str(e)}")
+                job['status'] = 'error'
+                job['error'] = str(e)
+                self.root.after(0, self.update_crop_queue_display)
 
         threading.Thread(target=crop_thread, daemon=True).start()
+
+    def update_crop_queue_display(self):
+        self.crop_queue_listbox.delete(0, tk.END)
+
+        status_icons = {
+            'queued': '[...]',
+            'processing': '[>>>]',
+            'done': '[OK]',
+            'error': '[ERR]'
+        }
+
+        for job in self.crop_jobs:
+            icon = status_icons.get(job['status'], '[?]')
+            box = job['crop_box']
+            size = f"{box[2]-box[0]}x{box[3]-box[1]}"
+            display = f"{icon} {job['filename'][:20]} ({size})"
+            self.crop_queue_listbox.insert(tk.END, display)
+
+            # Color code based on status
+            idx = self.crop_jobs.index(job)
+            if job['status'] == 'done':
+                self.crop_queue_listbox.itemconfig(idx, fg='green')
+            elif job['status'] == 'error':
+                self.crop_queue_listbox.itemconfig(idx, fg='red')
+            elif job['status'] == 'processing':
+                self.crop_queue_listbox.itemconfig(idx, fg='blue')
+
+        # Update queue status
+        total = len(self.crop_jobs)
+        processing = sum(1 for j in self.crop_jobs if j['status'] == 'processing')
+        done = sum(1 for j in self.crop_jobs if j['status'] == 'done')
+        self.crop_queue_status.set(f"Queue: {total} jobs ({processing} running, {done} done)")
+
+    def clear_completed_crop_jobs(self):
+        self.crop_jobs = [j for j in self.crop_jobs if j['status'] not in ('done', 'error')]
+        self.update_crop_queue_display()
 
     def create_trim_tab(self):
         tab = tk.Frame(self.content_frame, bg='white')
