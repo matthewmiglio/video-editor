@@ -23,13 +23,13 @@ class VideoEditorGUI:
 
         # Define pastel colors for tabs
         self.pastel_colors = [
-            '#FFB3B3',  # Pastel pink
-            '#B3DFFF',  # Pastel blue
-            '#B3FFB3',  # Pastel green
-            '#FFE0B3',  # Pastel orange
-            '#E0B3FF',  # Pastel purple
-            '#FFFFB3',  # Pastel yellow
-            '#FFB3E0'   # Pastel magenta
+            '#FF9999',  # Pastel pink
+            '#99CFFF',  # Pastel blue
+            '#99FF99',  # Pastel green
+            '#FFD699',  # Pastel orange
+            '#D699FF',  # Pastel purple
+            '#FFFF99',  # Pastel yellow
+            '#FF99D6'   # Pastel magenta
         ]
 
         # Create custom notebook with colored tabs
@@ -459,6 +459,10 @@ class VideoEditorGUI:
         tab = tk.Frame(self.content_frame, bg='white')
         self.add_tab(tab, "Trim/Subclip")
 
+        # Initialize trim job queue
+        self.trim_jobs = []  # List of job dicts with status info
+        self.trim_job_id = 0
+
         # Top section - file selection
         top_frame = ttk.Frame(tab)
         top_frame.pack(fill='x', padx=10, pady=10)
@@ -472,13 +476,13 @@ class VideoEditorGUI:
         self.trim_duration_var = tk.StringVar(value="Duration: Unknown")
         ttk.Label(top_frame, textvariable=self.trim_duration_var, font=('Arial', 10, 'bold')).pack(side='left', padx=10)
 
-        # Main content - split into left and right
+        # Main content - split into left, center, and right
         content_frame = ttk.Frame(tab)
         content_frame.pack(fill='both', expand=True, padx=10, pady=5)
 
         # Left side - controls
         left_frame = ttk.Frame(content_frame)
-        left_frame.pack(side='left', fill='both', expand=False, padx=(0, 10))
+        left_frame.pack(side='left', fill='y', padx=(0, 10))
 
         time_frame = ttk.LabelFrame(left_frame, text="Select Time Range")
         time_frame.pack(fill='x', pady=5)
@@ -497,19 +501,16 @@ class VideoEditorGUI:
         self.trim_start_var.trace_add('write', self.update_trim_duration)
         self.trim_end_var.trace_add('write', self.update_trim_duration)
 
-        ttk.Button(left_frame, text="Trim Video", command=self.trim_video_action).pack(fill='x', pady=10)
+        ttk.Button(left_frame, text="Add to Queue", command=self.add_trim_to_queue).pack(fill='x', pady=10)
 
-        self.trim_progress = ttk.Progressbar(left_frame, mode='indeterminate')
-        self.trim_progress.pack(fill='x', pady=5)
-
-        self.trim_status = tk.StringVar(value="Ready")
+        self.trim_status = tk.StringVar(value="Ready - Set up a trim and add to queue")
         ttk.Label(left_frame, textvariable=self.trim_status).pack(pady=5)
 
-        # Right side - preview
+        # Center - preview
         preview_frame = ttk.LabelFrame(content_frame, text="Video Scrubber Preview")
-        preview_frame.pack(side='right', fill='both', expand=True)
+        preview_frame.pack(side='left', fill='both', expand=True, padx=(0, 10))
 
-        self.trim_preview_label = tk.Label(preview_frame, bg='black', width=60, height=25)
+        self.trim_preview_label = tk.Label(preview_frame, bg='black', width=50, height=20)
         self.trim_preview_label.pack(padx=10, pady=10)
 
         scrubber_frame = ttk.Frame(preview_frame)
@@ -522,6 +523,22 @@ class VideoEditorGUI:
         self.scrubber_scale = ttk.Scale(scrubber_frame, from_=0, to=100, variable=self.scrubber_var,
                                         orient='horizontal', command=self.on_scrubber_change)
         self.scrubber_scale.pack(fill='x', pady=5)
+
+        # Right side - Job Queue
+        queue_frame = ttk.LabelFrame(content_frame, text="Processing Queue")
+        queue_frame.pack(side='right', fill='both', expand=False, padx=(0, 0))
+
+        # Queue listbox
+        self.trim_queue_listbox = tk.Listbox(queue_frame, width=40, height=10, font=('Consolas', 9))
+        self.trim_queue_listbox.pack(fill='both', expand=True, padx=5, pady=5)
+
+        queue_btn_frame = ttk.Frame(queue_frame)
+        queue_btn_frame.pack(fill='x', padx=5, pady=5)
+
+        ttk.Button(queue_btn_frame, text="Clear Completed", command=self.clear_completed_trim_jobs).pack(side='left', padx=2)
+
+        self.trim_queue_status = tk.StringVar(value="Queue: 0 jobs")
+        ttk.Label(queue_frame, textvariable=self.trim_queue_status).pack(pady=5)
 
     def browse_trim_input(self):
         filename = filedialog.askopenfilename(
@@ -595,7 +612,7 @@ class VideoEditorGUI:
         except:
             pass
 
-    def trim_video_action(self):
+    def add_trim_to_queue(self):
         input_path = self.trim_input_path.get()
         if not input_path or not os.path.exists(input_path):
             messagebox.showerror("Error", "Please select a valid input video")
@@ -608,32 +625,83 @@ class VideoEditorGUI:
             messagebox.showerror("Error", "Start time must be less than end time")
             return
 
-        # Release the video capture before processing
-        if hasattr(self, 'trim_video_cap') and self.trim_video_cap is not None:
-            self.trim_video_cap.release()
-            self.trim_video_cap = None
+        # Create job entry
+        self.trim_job_id += 1
+        job = {
+            'id': self.trim_job_id,
+            'input_path': input_path,
+            'start_time': start_time,
+            'end_time': end_time,
+            'status': 'queued',
+            'filename': os.path.basename(input_path)
+        }
+        self.trim_jobs.append(job)
 
+        # Add to listbox
+        self.update_trim_queue_display()
+
+        # Start processing this job
+        self.process_trim_job(job)
+
+        self.trim_status.set(f"Added to queue: {job['filename']} ({start_time:.1f}s - {end_time:.1f}s)")
+
+    def process_trim_job(self, job):
         def trim_thread():
             try:
-                # Force garbage collection and wait to ensure file handles are released
                 import gc
                 gc.collect()
-                time.sleep(1.0)
+                time.sleep(0.5)
 
-                self.trim_progress.start()
-                self.trim_status.set("Trimming video...")
+                job['status'] = 'processing'
+                self.root.after(0, self.update_trim_queue_display)
 
-                output = get_subclip(input_path, start_time, end_time)
+                output = get_subclip(job['input_path'], job['start_time'], job['end_time'])
 
-                self.trim_progress.stop()
-                self.trim_status.set(f"Done! Saved to: {os.path.basename(output)}")
-                messagebox.showinfo("Success", f"Trim complete!\n{output}")
+                job['status'] = 'done'
+                job['output'] = output
+                self.root.after(0, self.update_trim_queue_display)
+
             except Exception as e:
-                self.trim_progress.stop()
-                self.trim_status.set("Error occurred")
-                messagebox.showerror("Error", f"Trim failed: {str(e)}")
+                job['status'] = f'error'
+                job['error'] = str(e)
+                self.root.after(0, self.update_trim_queue_display)
 
         threading.Thread(target=trim_thread, daemon=True).start()
+
+    def update_trim_queue_display(self):
+        self.trim_queue_listbox.delete(0, tk.END)
+
+        status_icons = {
+            'queued': '[...]',
+            'processing': '[>>>]',
+            'done': '[OK]',
+            'error': '[ERR]'
+        }
+
+        for job in self.trim_jobs:
+            icon = status_icons.get(job['status'], '[?]')
+            time_range = f"{job['start_time']:.1f}-{job['end_time']:.1f}s"
+            display = f"{icon} {job['filename'][:20]} ({time_range})"
+            self.trim_queue_listbox.insert(tk.END, display)
+
+            # Color code based on status
+            idx = self.trim_jobs.index(job)
+            if job['status'] == 'done':
+                self.trim_queue_listbox.itemconfig(idx, fg='green')
+            elif job['status'] == 'error':
+                self.trim_queue_listbox.itemconfig(idx, fg='red')
+            elif job['status'] == 'processing':
+                self.trim_queue_listbox.itemconfig(idx, fg='blue')
+
+        # Update queue status
+        total = len(self.trim_jobs)
+        processing = sum(1 for j in self.trim_jobs if j['status'] == 'processing')
+        done = sum(1 for j in self.trim_jobs if j['status'] == 'done')
+        self.trim_queue_status.set(f"Queue: {total} jobs ({processing} running, {done} done)")
+
+    def clear_completed_trim_jobs(self):
+        self.trim_jobs = [j for j in self.trim_jobs if j['status'] not in ('done', 'error')]
+        self.update_trim_queue_display()
 
     def create_speed_tab(self):
         tab = tk.Frame(self.content_frame, bg='white')
