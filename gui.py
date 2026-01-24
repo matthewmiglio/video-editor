@@ -154,7 +154,7 @@ class VideoEditorGUI:
         self.format_input_files = []
 
         ttk.Label(tab, text="Output Format:").grid(row=1, column=0, padx=10, pady=10, sticky='w')
-        self.format_output_type = tk.StringVar(value="WEBM")
+        self.format_output_type = tk.StringVar(value="MP4")
         format_combo = ttk.Combobox(tab, textvariable=self.format_output_type,
                                     values=["WEBM", "MP4", "GIF", "MP3"], state='readonly')
         format_combo.grid(row=1, column=1, padx=10, pady=10, sticky='w')
@@ -163,17 +163,21 @@ class VideoEditorGUI:
         self.format_options_frame = ttk.LabelFrame(tab, text="Conversion Options")
         self.format_options_frame.grid(row=2, column=0, columnspan=3, padx=10, pady=10, sticky='ew')
 
+        # Initialize variables for all format options
         self.webm_crf_var = tk.IntVar(value=32)
-        ttk.Label(self.format_options_frame, text="CRF Quality (lower = better):").grid(row=0, column=0, padx=10, pady=5, sticky='w')
-        ttk.Scale(self.format_options_frame, from_=0, to=51, variable=self.webm_crf_var, orient='horizontal').grid(row=0, column=1, padx=10, pady=5, sticky='ew')
-        ttk.Label(self.format_options_frame, textvariable=self.webm_crf_var).grid(row=0, column=2, padx=10, pady=5)
-
         self.use_opus_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(self.format_options_frame, text="Use Opus codec (better quality)",
-                       variable=self.use_opus_var).grid(row=1, column=0, columnspan=3, padx=10, pady=5, sticky='w')
-
         self.mp4_crf_var = tk.IntVar(value=20)
         self.mp4_preset_var = tk.StringVar(value="medium")
+
+        # Show MP4 options by default
+        ttk.Label(self.format_options_frame, text="CRF Quality (lower = better):").grid(row=0, column=0, padx=10, pady=5, sticky='w')
+        ttk.Scale(self.format_options_frame, from_=0, to=51, variable=self.mp4_crf_var, orient='horizontal').grid(row=0, column=1, padx=10, pady=5, sticky='ew')
+        ttk.Label(self.format_options_frame, textvariable=self.mp4_crf_var).grid(row=0, column=2, padx=10, pady=5)
+
+        ttk.Label(self.format_options_frame, text="Preset:").grid(row=1, column=0, padx=10, pady=5, sticky='w')
+        ttk.Combobox(self.format_options_frame, textvariable=self.mp4_preset_var,
+                    values=["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"],
+                    state='readonly').grid(row=1, column=1, padx=10, pady=5, sticky='w')
 
         ttk.Button(tab, text="Convert All", command=self.convert_format).grid(row=3, column=0, columnspan=3, pady=20)
 
