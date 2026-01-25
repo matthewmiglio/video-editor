@@ -1020,110 +1020,114 @@ class VideoEditorGUI:
         tab = tk.Frame(self.content_frame, bg='white')
         self.add_tab(tab, "Resize/Stretch")
 
-        ttk.Label(tab, text="Input Video:").grid(row=0, column=0, padx=10, pady=10, sticky='w')
-        self.resize_input_path = tk.StringVar()
-        ttk.Entry(tab, textvariable=self.resize_input_path, width=50).grid(row=0, column=1, padx=10, pady=10)
-        ttk.Button(tab, text="Browse", command=self.browse_resize_input).grid(row=0, column=2, padx=10, pady=10)
+        # Store resize file data: list of {path, width, height}
+        self.resize_files = []
 
-        ttk.Button(tab, text="Get Video Dimensions", command=self.get_resize_dims).grid(row=1, column=0, columnspan=3, pady=10)
+        # Top section - file management buttons
+        btn_frame = ttk.Frame(tab)
+        btn_frame.pack(fill='x', padx=10, pady=10)
 
-        self.current_dims = tk.StringVar(value="Current: Unknown")
-        ttk.Label(tab, textvariable=self.current_dims, font=('Arial', 12, 'bold')).grid(row=2, column=0, columnspan=3, pady=10)
+        ttk.Button(btn_frame, text="Add Videos", command=self.browse_resize_input).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Remove Selected", command=self.remove_resize_files).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Clear All", command=self.clear_resize_files).pack(side='left', padx=5)
 
-        dims_frame = ttk.LabelFrame(tab, text="New Dimensions")
-        dims_frame.grid(row=3, column=0, columnspan=3, padx=10, pady=10, sticky='ew')
+        self.resize_file_count = tk.StringVar(value="0 files")
+        ttk.Label(btn_frame, textvariable=self.resize_file_count).pack(side='right', padx=10)
 
-        ttk.Label(dims_frame, text="Width:").grid(row=0, column=0, padx=10, pady=5, sticky='w')
+        # Table showing videos with dimensions
+        table_frame = ttk.LabelFrame(tab, text="Video Dimensions")
+        table_frame.pack(fill='both', expand=True, padx=10, pady=5)
+
+        # Create Treeview for table
+        columns = ('filename', 'width', 'height')
+        self.resize_tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=8)
+
+        self.resize_tree.heading('filename', text='Video Name')
+        self.resize_tree.heading('width', text='Width')
+        self.resize_tree.heading('height', text='Height')
+
+        self.resize_tree.column('filename', width=300)
+        self.resize_tree.column('width', width=100, anchor='center')
+        self.resize_tree.column('height', width=100, anchor='center')
+
+        scrollbar = ttk.Scrollbar(table_frame, orient='vertical', command=self.resize_tree.yview)
+        self.resize_tree.configure(yscrollcommand=scrollbar.set)
+
+        self.resize_tree.pack(side='left', fill='both', expand=True, padx=5, pady=5)
+        scrollbar.pack(side='right', fill='y', pady=5)
+
+        # Output resolution section
+        output_frame = ttk.LabelFrame(tab, text="Output Resolution")
+        output_frame.pack(fill='x', padx=10, pady=10)
+
+        dims_frame = ttk.Frame(output_frame)
+        dims_frame.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(dims_frame, text="Width:").pack(side='left', padx=5)
         self.new_width_var = tk.IntVar(value=1920)
-        ttk.Entry(dims_frame, textvariable=self.new_width_var, width=15).grid(row=0, column=1, padx=10, pady=5)
+        ttk.Entry(dims_frame, textvariable=self.new_width_var, width=10).pack(side='left', padx=5)
 
-        ttk.Label(dims_frame, text="Height:").grid(row=1, column=0, padx=10, pady=5, sticky='w')
+        ttk.Label(dims_frame, text="Height:").pack(side='left', padx=15)
         self.new_height_var = tk.IntVar(value=1080)
-        ttk.Entry(dims_frame, textvariable=self.new_height_var, width=15).grid(row=1, column=1, padx=10, pady=5)
+        ttk.Entry(dims_frame, textvariable=self.new_height_var, width=10).pack(side='left', padx=5)
 
-        self.maintain_aspect = tk.BooleanVar(value=False)
-        ttk.Checkbutton(dims_frame, text="Maintain Aspect Ratio", variable=self.maintain_aspect,
-                       command=self.toggle_aspect_ratio).grid(row=2, column=0, columnspan=2, pady=5)
+        # Presets
+        presets_frame = ttk.Frame(output_frame)
+        presets_frame.pack(fill='x', padx=10, pady=5)
 
-        presets_frame = ttk.LabelFrame(tab, text="Common Presets")
-        presets_frame.grid(row=4, column=0, columnspan=3, padx=10, pady=10, sticky='ew')
+        ttk.Label(presets_frame, text="Presets:").pack(side='left', padx=5)
+        ttk.Button(presets_frame, text="1080p Desktop (1920x1080)",
+                  command=lambda: self.set_dimensions(1920, 1080)).pack(side='left', padx=5)
+        ttk.Button(presets_frame, text="1080p Phone (1080x1920)",
+                  command=lambda: self.set_dimensions(1080, 1920)).pack(side='left', padx=5)
 
-        presets = [
-            ("480p", 854, 480),
-            ("720p", 1280, 720),
-            ("1080p", 1920, 1080),
-            ("1440p", 2560, 1440),
-            ("4K", 3840, 2160)
-        ]
+        # Batch stretch button
+        ttk.Button(tab, text="Batch Stretch All", command=self.batch_resize_action).pack(pady=10)
 
-        for i, (name, width, height) in enumerate(presets):
-            ttk.Button(presets_frame, text=name,
-                      command=lambda w=width, h=height: self.set_dimensions(w, h)).grid(row=0, column=i, padx=5, pady=5)
+        # Progress
+        self.resize_progress = ttk.Progressbar(tab, mode='determinate')
+        self.resize_progress.pack(fill='x', padx=10, pady=5)
 
-        ttk.Button(tab, text="Resize Video", command=self.resize_video_action).grid(row=5, column=0, columnspan=3, pady=20)
-
-        self.resize_progress = ttk.Progressbar(tab, mode='indeterminate')
-        self.resize_progress.grid(row=6, column=0, columnspan=3, padx=10, pady=10, sticky='ew')
-
-        self.resize_status = tk.StringVar(value="Ready")
-        ttk.Label(tab, textvariable=self.resize_status).grid(row=7, column=0, columnspan=3, pady=5)
+        self.resize_status = tk.StringVar(value="Ready - Add videos to resize")
+        ttk.Label(tab, textvariable=self.resize_status).pack(pady=5)
 
     def browse_resize_input(self):
-        filename = filedialog.askopenfilename(
-            title="Select Video File",
+        filenames = filedialog.askopenfilenames(
+            title="Select Video Files",
             filetypes=[("Video files", "*.mp4 *.webm *.avi *.mov"), ("All files", "*.*")]
         )
-        if filename:
-            self.resize_input_path.set(filename)
+        if filenames:
+            for f in filenames:
+                if f not in [item['path'] for item in self.resize_files]:
+                    try:
+                        width, height = get_vid_dims(f)
+                        self.resize_files.append({'path': f, 'width': width, 'height': height})
+                        self.resize_tree.insert('', tk.END, values=(os.path.basename(f), width, height))
+                    except Exception as e:
+                        messagebox.showerror("Error", f"Could not read dimensions for {os.path.basename(f)}: {e}")
 
-    def get_resize_dims(self):
-        input_path = self.resize_input_path.get()
-        if not input_path or not os.path.exists(input_path):
-            messagebox.showerror("Error", "Please select a valid input video")
-            return
+            self.resize_file_count.set(f"{len(self.resize_files)} file(s)")
 
-        try:
-            width, height = get_vid_dims(input_path)
-            self.original_width = width
-            self.original_height = height
-            self.current_dims.set(f"Current: {width} x {height}")
-            self.new_width_var.set(width)
-            self.new_height_var.set(height)
-        except Exception as e:
-            messagebox.showerror("Error", f"Could not get video dimensions: {str(e)}")
+    def remove_resize_files(self):
+        selected = self.resize_tree.selection()
+        for item in selected:
+            idx = self.resize_tree.index(item)
+            self.resize_tree.delete(item)
+            del self.resize_files[idx]
+        self.resize_file_count.set(f"{len(self.resize_files)} file(s)")
+
+    def clear_resize_files(self):
+        self.resize_tree.delete(*self.resize_tree.get_children())
+        self.resize_files = []
+        self.resize_file_count.set("0 files")
 
     def set_dimensions(self, width, height):
         self.new_width_var.set(width)
         self.new_height_var.set(height)
 
-    def toggle_aspect_ratio(self):
-        if self.maintain_aspect.get() and hasattr(self, 'original_width'):
-            self.aspect_ratio = self.original_width / self.original_height
-            self.new_width_var.trace_add('write', self.update_height_from_width)
-            self.new_height_var.trace_add('write', self.update_width_from_height)
-
-    def update_height_from_width(self, *args):
-        if self.maintain_aspect.get() and hasattr(self, 'aspect_ratio'):
-            try:
-                new_width = self.new_width_var.get()
-                new_height = int(new_width / self.aspect_ratio)
-                self.new_height_var.set(new_height)
-            except:
-                pass
-
-    def update_width_from_height(self, *args):
-        if self.maintain_aspect.get() and hasattr(self, 'aspect_ratio'):
-            try:
-                new_height = self.new_height_var.get()
-                new_width = int(new_height * self.aspect_ratio)
-                self.new_width_var.set(new_width)
-            except:
-                pass
-
-    def resize_video_action(self):
-        input_path = self.resize_input_path.get()
-        if not input_path or not os.path.exists(input_path):
-            messagebox.showerror("Error", "Please select a valid input video")
+    def batch_resize_action(self):
+        if not self.resize_files:
+            messagebox.showerror("Error", "Please add at least one video")
             return
 
         new_width = self.new_width_var.get()
@@ -1131,18 +1135,42 @@ class VideoEditorGUI:
 
         def resize_thread():
             try:
-                self.resize_progress.start()
-                self.resize_status.set(f"Resizing to {new_width}x{new_height}...")
+                total = len(self.resize_files)
+                self.resize_progress['maximum'] = total
+                self.resize_progress['value'] = 0
 
-                output = stretch_video_dims(input_path, new_width, new_height)
+                successful = []
+                failed = []
 
-                self.resize_progress.stop()
-                self.resize_status.set(f"Done! Saved to: {os.path.basename(output)}")
-                messagebox.showinfo("Success", f"Resize complete!\n{output}")
+                for i, file_info in enumerate(self.resize_files):
+                    input_path = file_info['path']
+                    self.resize_status.set(f"Resizing {i+1}/{total}: {os.path.basename(input_path)}")
+
+                    try:
+                        output = stretch_video_dims(input_path, new_width, new_height)
+                        successful.append(output)
+                    except Exception as e:
+                        failed.append((input_path, str(e)))
+
+                    self.resize_progress['value'] = i + 1
+
+                self.resize_progress['value'] = total
+
+                if failed:
+                    self.resize_status.set(f"Done with errors: {len(successful)} succeeded, {len(failed)} failed")
+                    error_details = "\n".join([f"{os.path.basename(f)}: {e}" for f, e in failed])
+                    messagebox.showwarning("Partial Success",
+                                          f"Resized {len(successful)}/{total} files.\n\nFailed:\n{error_details}")
+                else:
+                    self.resize_status.set(f"Done! Resized {total} file(s) to {new_width}x{new_height}")
+                    messagebox.showinfo("Success", f"Batch resize complete!\n{total} file(s) resized.")
+
             except Exception as e:
-                self.resize_progress.stop()
+                self.resize_progress['value'] = 0
                 self.resize_status.set("Error occurred")
                 messagebox.showerror("Error", f"Resize failed: {str(e)}")
+
+        threading.Thread(target=resize_thread, daemon=True).start()
 
         threading.Thread(target=resize_thread, daemon=True).start()
 
