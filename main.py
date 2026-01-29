@@ -262,7 +262,7 @@ def speed_up_mp4_video(input_video_path, speed_factor: float):
     start_time = time.time()
 
     temp_output_path = input_video_path.replace(".mp4", f"_sped_temp_{speed_factor}.mp4")
-    clip = VideoFileClip(input_video_path).fx(vfx.speedx, speed_factor)
+    clip = VideoFileClip(input_video_path).with_effects([vfx.MultiplySpeed(speed_factor)])
     clip.write_videofile(temp_output_path, codec="libx264")
     clip.close()
 

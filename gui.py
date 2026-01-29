@@ -812,26 +812,9 @@ class VideoEditorGUI:
         speed_frame.grid(row=1, column=0, columnspan=3, padx=10, pady=10, sticky='ew')
 
         ttk.Label(speed_frame, text="Speed Factor:").grid(row=0, column=0, padx=10, pady=10, sticky='w')
-        self.speed_factor_var = tk.DoubleVar(value=1.0)
-
-        speed_scale = ttk.Scale(speed_frame, from_=0.25, to=4.0, variable=self.speed_factor_var, orient='horizontal', length=300)
-        speed_scale.grid(row=0, column=1, padx=10, pady=10, sticky='ew')
-
-        speed_label = ttk.Label(speed_frame, text="1.0x")
-        speed_label.grid(row=0, column=2, padx=10, pady=10)
-
-        def update_speed_label(*args):
-            speed_label.config(text=f"{self.speed_factor_var.get():.2f}x")
-
-        self.speed_factor_var.trace_add('write', update_speed_label)
-
-        presets_frame = ttk.Frame(speed_frame)
-        presets_frame.grid(row=1, column=0, columnspan=3, pady=10)
-
-        ttk.Label(presets_frame, text="Presets:").pack(side='left', padx=5)
-        for preset in [0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0]:
-            ttk.Button(presets_frame, text=f"{preset}x",
-                      command=lambda p=preset: self.speed_factor_var.set(p)).pack(side='left', padx=2)
+        self.speed_factor_var = tk.StringVar(value="1.0")
+        ttk.Entry(speed_frame, textvariable=self.speed_factor_var, width=10).grid(row=0, column=1, padx=10, pady=10, sticky='w')
+        ttk.Label(speed_frame, text="(e.g. 7.3 = 7.3x faster)").grid(row=0, column=2, padx=10, pady=10, sticky='w')
 
         ttk.Button(tab, text="Apply Speed Change", command=self.speed_video_action).grid(row=2, column=0, columnspan=3, pady=20)
 
@@ -855,7 +838,13 @@ class VideoEditorGUI:
             messagebox.showerror("Error", "Please select a valid input video")
             return
 
-        speed_factor = self.speed_factor_var.get()
+        try:
+            speed_factor = float(self.speed_factor_var.get())
+            if speed_factor <= 0:
+                raise ValueError("Speed must be positive")
+        except ValueError:
+            messagebox.showerror("Error", "Please enter a valid positive number for speed factor")
+            return
 
         def speed_thread():
             try:
