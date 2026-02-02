@@ -2,16 +2,22 @@ import os
 import time
 import random
 import threading
+import json
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk, ImageEnhance
 import cv2
 import numpy as np
+
+CONFIG_DIR = os.path.join(os.path.dirname(__file__), "config")
+SLIDESHOW_CONFIG_FILE = os.path.join(CONFIG_DIR, "slideshow_config.json")
+SLOW_PAN_CONFIG_FILE = os.path.join(CONFIG_DIR, "slow_pan_config.json")
+COLLAGE_CONFIG_FILE = os.path.join(CONFIG_DIR, "collage_config.json")
 from main import (
     mp4_to_webm, webm_to_mp4, mkv_to_mp4, convert_mp4_to_gif, mp4_to_mp3,
     crop_video, get_subclip, speed_up_mp4_video, blur_video,
     stretch_video_dims, get_vid_dims, mute_video, get_video_duration,
-    adjust_brightness_video
+    adjust_brightness_video, create_slideshow, slow_pan_video, create_collage_video
 )
 
 
@@ -56,6 +62,10 @@ class VideoEditorGUI:
         self.create_resize_tab()
         self.create_audio_tab()
         self.create_brightness_tab()
+        self.create_slideshow_tab()
+        self.create_bulk_crop_images_tab()
+        self.create_slow_pan_tab()
+        self.create_collage_tab()
 
         # Show first tab by default
         self.show_tab(0)
@@ -88,12 +98,12 @@ class VideoEditorGUI:
         tab_btn = tk.Button(
             self.tab_bar,
             text=title,
-            font=('Arial', 14, 'bold'),
+            font=('Arial', 9),
             bg=color,
             activebackground=darker_color,
             relief='flat',
-            padx=20,
-            pady=10,
+            padx=12,
+            pady=6,
             command=lambda idx=tab_index: self.show_tab(idx)
         )
         tab_btn.pack(side='left', padx=2)
@@ -344,7 +354,7 @@ class VideoEditorGUI:
         self.crop_canvas_frame = ttk.Frame(left_frame)
         self.crop_canvas_frame.pack(pady=5)
 
-        self.crop_canvas = tk.Canvas(self.crop_canvas_frame, width=640, height=360, bg='gray')
+        self.crop_canvas = tk.Canvas(self.crop_canvas_frame, width=1088, height=612, bg='gray')
         self.crop_canvas.pack()
 
         self.crop_rect = None
@@ -400,6 +410,16 @@ class VideoEditorGUI:
             return
 
         cap = cv2.VideoCapture(input_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        if total_frames <= 0:
+            messagebox.showerror("Error", "Could not read video frames")
+            cap.release()
+            return
+
+        # Pick a random frame
+        random_frame_idx = random.randint(0, total_frames - 1)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, random_frame_idx)
         ret, frame = cap.read()
         cap.release()
 
@@ -410,8 +430,8 @@ class VideoEditorGUI:
         self.crop_original_frame = frame
         original_height, original_width = frame.shape[:2]
 
-        max_width = 640
-        max_height = 360
+        max_width = 1088
+        max_height = 612
 
         width_scale = max_width / original_width
         height_scale = max_height / original_height
@@ -429,7 +449,7 @@ class VideoEditorGUI:
         self.crop_canvas.config(width=self.crop_image.width, height=self.crop_image.height)
         self.crop_canvas.create_image(0, 0, anchor='nw', image=self.crop_photo)
 
-        self.crop_status.set("Preview loaded. Click and drag to select crop region.")
+        self.crop_status.set(f"Frame {random_frame_idx + 1}/{total_frames} loaded. Click and drag to select crop region.")
 
     def on_crop_press(self, event):
         self.crop_start_x = event.x
@@ -1441,6 +1461,1228 @@ class VideoEditorGUI:
                 messagebox.showerror("Error", f"Brightness adjustment failed: {str(e)}")
 
         threading.Thread(target=save_thread, daemon=True).start()
+
+    def create_slideshow_tab(self):
+        tab = tk.Frame(self.content_frame, bg='white')
+        self.add_tab(tab, "Slideshow Maker")
+
+        # Main layout - two columns
+        main_frame = ttk.Frame(tab)
+        main_frame.pack(fill='both', expand=True, padx=10, pady=10)
+
+        # Left column - inputs
+        left_frame = ttk.Frame(main_frame)
+        left_frame.pack(side='left', fill='both', expand=True, padx=(0, 10))
+
+        # Image folder selection
+        folder_frame = ttk.LabelFrame(left_frame, text="Image Folder")
+        folder_frame.pack(fill='x', pady=5)
+
+        folder_row = ttk.Frame(folder_frame)
+        folder_row.pack(fill='x', padx=10, pady=5)
+
+        self.slideshow_folder_path = tk.StringVar()
+        ttk.Entry(folder_row, textvariable=self.slideshow_folder_path, width=50).pack(side='left', padx=(0, 5))
+        ttk.Button(folder_row, text="Browse", command=self.browse_slideshow_folder).pack(side='left')
+
+        self.slideshow_image_count = tk.StringVar(value="No folder selected")
+        ttk.Label(folder_frame, textvariable=self.slideshow_image_count).pack(padx=10, pady=(0, 5))
+
+        # Track number of images for duration calculation
+        self.slideshow_num_images = 0
+
+        # Duration settings
+        duration_frame = ttk.LabelFrame(left_frame, text="Frame Duration (seconds)")
+        duration_frame.pack(fill='x', pady=5)
+
+        dur_row = ttk.Frame(duration_frame)
+        dur_row.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(dur_row, text="Start Rate:").pack(side='left', padx=(0, 5))
+        self.slideshow_start_duration = tk.StringVar(value="1.0")
+        ttk.Entry(dur_row, textvariable=self.slideshow_start_duration, width=8).pack(side='left', padx=(0, 15))
+
+        ttk.Label(dur_row, text="End Rate:").pack(side='left', padx=(0, 5))
+        self.slideshow_end_duration = tk.StringVar(value="1.0")
+        ttk.Entry(dur_row, textvariable=self.slideshow_end_duration, width=8).pack(side='left')
+
+        # Expected length display
+        self.slideshow_expected_length = tk.StringVar(value="Expected length: --")
+        ttk.Label(duration_frame, textvariable=self.slideshow_expected_length, font=('Arial', 10, 'bold')).pack(padx=10, pady=5)
+
+        ttk.Label(duration_frame, text="Use different values to speed up/slow down over time").pack(padx=10, pady=(0, 5))
+
+        # Add traces to update expected length when durations change
+        self.slideshow_start_duration.trace_add('write', self.update_slideshow_expected_length)
+        self.slideshow_end_duration.trace_add('write', self.update_slideshow_expected_length)
+
+        # Options frame
+        options_frame = ttk.LabelFrame(left_frame, text="Options")
+        options_frame.pack(fill='x', pady=5)
+
+        # Shuffle checkbox
+        self.slideshow_shuffle = tk.BooleanVar(value=False)
+        ttk.Checkbutton(options_frame, text="Shuffle images", variable=self.slideshow_shuffle).pack(anchor='w', padx=10, pady=2)
+
+        # Scale mode
+        scale_row = ttk.Frame(options_frame)
+        scale_row.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(scale_row, text="Image Scaling:").pack(side='left', padx=(0, 5))
+        self.slideshow_scale_mode = tk.StringVar(value="stretch")
+        scale_combo = ttk.Combobox(scale_row, textvariable=self.slideshow_scale_mode,
+                                   values=["stretch", "fit", "crop"], state='readonly', width=15)
+        scale_combo.pack(side='left')
+
+        # Random rotation section
+        rotation_frame = ttk.LabelFrame(left_frame, text="Random Rotation")
+        rotation_frame.pack(fill='x', pady=5)
+
+        self.slideshow_random_rotation = tk.BooleanVar(value=False)
+        ttk.Checkbutton(rotation_frame, text="Enable random rotation",
+                       variable=self.slideshow_random_rotation).pack(anchor='w', padx=10, pady=2)
+
+        rot_row = ttk.Frame(rotation_frame)
+        rot_row.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(rot_row, text="Left degrees:").pack(side='left', padx=(0, 5))
+        self.slideshow_rotation_left = tk.StringVar(value="15")
+        ttk.Entry(rot_row, textvariable=self.slideshow_rotation_left, width=6).pack(side='left', padx=(0, 15))
+
+        ttk.Label(rot_row, text="Right degrees:").pack(side='left', padx=(0, 5))
+        self.slideshow_rotation_right = tk.StringVar(value="15")
+        ttk.Entry(rot_row, textvariable=self.slideshow_rotation_right, width=6).pack(side='left')
+
+        # Sound effect section
+        sound_frame = ttk.LabelFrame(left_frame, text="Sound Effect (optional)")
+        sound_frame.pack(fill='x', pady=5)
+
+        sound_row = ttk.Frame(sound_frame)
+        sound_row.pack(fill='x', padx=10, pady=5)
+
+        self.slideshow_sound_path = tk.StringVar()
+        ttk.Entry(sound_row, textvariable=self.slideshow_sound_path, width=40).pack(side='left', padx=(0, 5))
+        ttk.Button(sound_row, text="Browse", command=self.browse_slideshow_sound).pack(side='left', padx=(0, 5))
+        ttk.Button(sound_row, text="Clear", command=lambda: self.slideshow_sound_path.set("")).pack(side='left')
+
+        ttk.Label(sound_frame, text="Plays on each frame transition").pack(padx=10, pady=(0, 5))
+
+        # Right column - output and action
+        right_frame = ttk.Frame(main_frame)
+        right_frame.pack(side='right', fill='both', expand=True)
+
+        # Output folder selection
+        output_frame = ttk.LabelFrame(right_frame, text="Output Folder")
+        output_frame.pack(fill='x', pady=5)
+
+        output_row = ttk.Frame(output_frame)
+        output_row.pack(fill='x', padx=10, pady=5)
+
+        self.slideshow_output_folder = tk.StringVar()
+        ttk.Entry(output_row, textvariable=self.slideshow_output_folder, width=50).pack(side='left', padx=(0, 5))
+        ttk.Button(output_row, text="Browse", command=self.browse_slideshow_output).pack(side='left')
+
+        ttk.Label(output_frame, text="Output will be saved as slideshow.mp4").pack(padx=10, pady=(0, 5))
+
+        # Create button
+        ttk.Button(right_frame, text="Create Slideshow", command=self.create_slideshow_action).pack(pady=20)
+
+        # Progress
+        self.slideshow_progress = ttk.Progressbar(right_frame, mode='determinate')
+        self.slideshow_progress.pack(fill='x', pady=5)
+
+        self.slideshow_status = tk.StringVar(value="Ready - Select an image folder to begin")
+        ttk.Label(right_frame, textvariable=self.slideshow_status).pack(pady=5)
+
+        # Load saved config
+        self.load_slideshow_config()
+
+    def browse_slideshow_folder(self):
+        folder = filedialog.askdirectory(title="Select Image Folder")
+        if folder:
+            self.slideshow_folder_path.set(folder)
+            # Count valid images
+            valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'}
+            count = sum(1 for f in os.listdir(folder)
+                       if os.path.splitext(f)[1].lower() in valid_extensions)
+            self.slideshow_num_images = count
+            self.slideshow_image_count.set(f"{count} images found")
+            self.update_slideshow_expected_length()
+
+    def browse_slideshow_sound(self):
+        filename = filedialog.askopenfilename(
+            title="Select Sound Effect",
+            filetypes=[("Audio files", "*.mp3 *.wav *.ogg *.m4a"), ("All files", "*.*")]
+        )
+        if filename:
+            self.slideshow_sound_path.set(filename)
+
+    def browse_slideshow_output(self):
+        folder = filedialog.askdirectory(title="Select Output Folder")
+        if folder:
+            self.slideshow_output_folder.set(folder)
+
+    def save_slideshow_config(self):
+        """Save slideshow settings to config file"""
+        config = {
+            'folder_path': self.slideshow_folder_path.get(),
+            'start_duration': self.slideshow_start_duration.get(),
+            'end_duration': self.slideshow_end_duration.get(),
+            'shuffle': self.slideshow_shuffle.get(),
+            'scale_mode': self.slideshow_scale_mode.get(),
+            'random_rotation': self.slideshow_random_rotation.get(),
+            'rotation_left': self.slideshow_rotation_left.get(),
+            'rotation_right': self.slideshow_rotation_right.get(),
+            'sound_path': self.slideshow_sound_path.get(),
+            'output_folder': self.slideshow_output_folder.get(),
+        }
+        try:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            with open(SLIDESHOW_CONFIG_FILE, 'w') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            print(f"Failed to save slideshow config: {e}")
+
+    def load_slideshow_config(self):
+        """Load slideshow settings from config file"""
+        if not os.path.exists(SLIDESHOW_CONFIG_FILE):
+            return
+        try:
+            with open(SLIDESHOW_CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+
+            if config.get('folder_path'):
+                self.slideshow_folder_path.set(config['folder_path'])
+                # Update image count if folder exists
+                if os.path.isdir(config['folder_path']):
+                    valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'}
+                    count = sum(1 for f in os.listdir(config['folder_path'])
+                               if os.path.splitext(f)[1].lower() in valid_extensions)
+                    self.slideshow_num_images = count
+                    self.slideshow_image_count.set(f"{count} images found")
+
+            if config.get('start_duration'):
+                self.slideshow_start_duration.set(config['start_duration'])
+            if config.get('end_duration'):
+                self.slideshow_end_duration.set(config['end_duration'])
+            if 'shuffle' in config:
+                self.slideshow_shuffle.set(config['shuffle'])
+            if config.get('scale_mode'):
+                self.slideshow_scale_mode.set(config['scale_mode'])
+            if 'random_rotation' in config:
+                self.slideshow_random_rotation.set(config['random_rotation'])
+            if config.get('rotation_left'):
+                self.slideshow_rotation_left.set(config['rotation_left'])
+            if config.get('rotation_right'):
+                self.slideshow_rotation_right.set(config['rotation_right'])
+            if config.get('sound_path'):
+                self.slideshow_sound_path.set(config['sound_path'])
+            if config.get('output_folder'):
+                self.slideshow_output_folder.set(config['output_folder'])
+
+            # Update expected length display
+            self.update_slideshow_expected_length()
+
+        except Exception as e:
+            print(f"Failed to load slideshow config: {e}")
+
+    def update_slideshow_expected_length(self, *args):
+        try:
+            start = float(self.slideshow_start_duration.get())
+            end = float(self.slideshow_end_duration.get())
+            n = self.slideshow_num_images
+
+            if n <= 0:
+                self.slideshow_expected_length.set("Expected length: --")
+                return
+
+            # Total duration = sum of linearly interpolated durations
+            # For n images: total = n * (start + end) / 2
+            total_seconds = n * (start + end) / 2
+
+            # Format as mm:ss or hh:mm:ss
+            minutes = int(total_seconds // 60)
+            seconds = total_seconds % 60
+            if minutes >= 60:
+                hours = minutes // 60
+                minutes = minutes % 60
+                time_str = f"{hours}h {minutes}m {seconds:.1f}s"
+            elif minutes > 0:
+                time_str = f"{minutes}m {seconds:.1f}s"
+            else:
+                time_str = f"{seconds:.1f}s"
+
+            self.slideshow_expected_length.set(f"Expected length: {time_str}")
+        except (ValueError, AttributeError):
+            self.slideshow_expected_length.set("Expected length: --")
+
+    def create_slideshow_action(self):
+        # Validate inputs
+        image_folder = self.slideshow_folder_path.get()
+        if not image_folder or not os.path.isdir(image_folder):
+            messagebox.showerror("Error", "Please select a valid image folder")
+            return
+
+        output_folder = self.slideshow_output_folder.get()
+        if not output_folder or not os.path.isdir(output_folder):
+            messagebox.showerror("Error", "Please select a valid output folder")
+            return
+
+        try:
+            start_duration = float(self.slideshow_start_duration.get())
+            end_duration = float(self.slideshow_end_duration.get())
+            if start_duration <= 0 or end_duration <= 0:
+                raise ValueError("Durations must be positive")
+        except ValueError:
+            messagebox.showerror("Error", "Please enter valid positive numbers for duration")
+            return
+
+        try:
+            rotation_left = float(self.slideshow_rotation_left.get())
+            rotation_right = float(self.slideshow_rotation_right.get())
+        except ValueError:
+            messagebox.showerror("Error", "Please enter valid numbers for rotation degrees")
+            return
+
+        output_path = os.path.join(output_folder, "slideshow.mp4")
+        sound_path = self.slideshow_sound_path.get() or None
+
+        def progress_callback(current, total):
+            self.slideshow_progress['maximum'] = total
+            self.slideshow_progress['value'] = current
+            self.slideshow_status.set(f"Processing image {current}/{total}...")
+
+        def slideshow_thread():
+            try:
+                self.slideshow_status.set("Creating slideshow...")
+
+                create_slideshow(
+                    image_folder=image_folder,
+                    output_path=output_path,
+                    start_duration=start_duration,
+                    end_duration=end_duration,
+                    shuffle_images=self.slideshow_shuffle.get(),
+                    random_rotation=self.slideshow_random_rotation.get(),
+                    rotation_left=rotation_left,
+                    rotation_right=rotation_right,
+                    sound_effect_path=sound_path,
+                    scale_mode=self.slideshow_scale_mode.get(),
+                    progress_callback=lambda c, t: self.root.after(0, lambda: progress_callback(c, t))
+                )
+
+                # Save config after successful creation
+                self.root.after(0, self.save_slideshow_config)
+
+                self.root.after(0, lambda: self.slideshow_progress.configure(value=0))
+                self.root.after(0, lambda: self.slideshow_status.set(f"Done! Saved to: {output_path}"))
+                self.root.after(0, lambda: messagebox.showinfo("Success", f"Slideshow created!\n{output_path}"))
+
+            except Exception as e:
+                import traceback
+                print("=" * 50)
+                print("SLIDESHOW ERROR:")
+                traceback.print_exc()
+                print("=" * 50)
+                error_msg = str(e) if str(e) else repr(e)
+                self.root.after(0, lambda: self.slideshow_progress.configure(value=0))
+                self.root.after(0, lambda: self.slideshow_status.set("Error occurred"))
+                self.root.after(0, lambda msg=error_msg: messagebox.showerror("Error", f"Slideshow creation failed: {msg}"))
+
+        threading.Thread(target=slideshow_thread, daemon=True).start()
+
+    def create_bulk_crop_images_tab(self):
+        tab = tk.Frame(self.content_frame, bg='white')
+        self.add_tab(tab, "Bulk Crop Images")
+
+        # Store image folder data
+        self.bulk_crop_image_files = []
+        self.bulk_crop_current_index = 0
+
+        # Top section - folder selection
+        top_frame = ttk.Frame(tab)
+        top_frame.pack(fill='x', padx=10, pady=10)
+
+        ttk.Label(top_frame, text="Image Folder:").pack(side='left', padx=5)
+        self.bulk_crop_folder_path = tk.StringVar()
+        ttk.Entry(top_frame, textvariable=self.bulk_crop_folder_path, width=50).pack(side='left', padx=5)
+        ttk.Button(top_frame, text="Browse", command=self.browse_bulk_crop_folder).pack(side='left', padx=5)
+        ttk.Button(top_frame, text="Load Preview", command=self.load_bulk_crop_preview).pack(side='left', padx=5)
+
+        self.bulk_crop_image_count = tk.StringVar(value="No folder selected")
+        ttk.Label(top_frame, textvariable=self.bulk_crop_image_count, font=('Arial', 10, 'bold')).pack(side='left', padx=10)
+
+        # Main content frame
+        content_frame = ttk.Frame(tab)
+        content_frame.pack(fill='both', expand=True, padx=10, pady=5)
+
+        # Left side - preview and controls
+        left_frame = ttk.Frame(content_frame)
+        left_frame.pack(side='left', fill='both', expand=True, padx=(0, 10))
+
+        # Canvas for image preview
+        self.bulk_crop_canvas_frame = ttk.Frame(left_frame)
+        self.bulk_crop_canvas_frame.pack(pady=5)
+
+        self.bulk_crop_canvas = tk.Canvas(self.bulk_crop_canvas_frame, width=640, height=480, bg='gray')
+        self.bulk_crop_canvas.pack()
+
+        # Initialize crop rectangle variables
+        self.bulk_crop_rect = None
+        self.bulk_crop_start_x = None
+        self.bulk_crop_start_y = None
+        self.bulk_crop_image = None
+        self.bulk_crop_photo = None
+        self.bulk_crop_scale_factor = 1.0
+        self.bulk_crop_box = None
+
+        # Bind mouse events for rectangle selection
+        self.bulk_crop_canvas.bind("<ButtonPress-1>", self.on_bulk_crop_press)
+        self.bulk_crop_canvas.bind("<B1-Motion>", self.on_bulk_crop_drag)
+        self.bulk_crop_canvas.bind("<ButtonRelease-1>", self.on_bulk_crop_release)
+
+        # Navigation controls
+        nav_frame = ttk.Frame(left_frame)
+        nav_frame.pack(fill='x', pady=5)
+
+        ttk.Button(nav_frame, text="<< Prev", command=self.bulk_crop_prev_image).pack(side='left', padx=5)
+        self.bulk_crop_nav_label = tk.StringVar(value="Image: 0 / 0")
+        ttk.Label(nav_frame, textvariable=self.bulk_crop_nav_label, font=('Arial', 10)).pack(side='left', padx=20)
+        ttk.Button(nav_frame, text="Next >>", command=self.bulk_crop_next_image).pack(side='left', padx=5)
+
+        self.bulk_crop_filename_label = tk.StringVar(value="")
+        ttk.Label(nav_frame, textvariable=self.bulk_crop_filename_label).pack(side='left', padx=20)
+
+        # Crop region display
+        coords_frame = ttk.Frame(left_frame)
+        coords_frame.pack(fill='x', pady=10)
+
+        ttk.Label(coords_frame, text="Crop Region:").pack(side='left', padx=5)
+        self.bulk_crop_coords = tk.StringVar(value="Not selected")
+        ttk.Label(coords_frame, textvariable=self.bulk_crop_coords, font=('Arial', 10, 'bold')).pack(side='left', padx=5)
+
+        # Action buttons
+        action_frame = ttk.Frame(left_frame)
+        action_frame.pack(fill='x', pady=10)
+
+        ttk.Button(action_frame, text="Crop All Images", command=self.bulk_crop_all_images).pack(side='left', padx=20)
+        ttk.Button(action_frame, text="Clear Selection", command=self.clear_bulk_crop_selection).pack(side='left', padx=5)
+
+        # 1-pixel crop buttons
+        pixel_crop_frame = ttk.LabelFrame(left_frame, text="Crop 1 Pixel From Edge")
+        pixel_crop_frame.pack(fill='x', pady=5)
+
+        pixel_btn_frame = ttk.Frame(pixel_crop_frame)
+        pixel_btn_frame.pack(pady=5)
+
+        ttk.Button(pixel_btn_frame, text="Left", command=lambda: self.bulk_crop_1px('left')).pack(side='left', padx=5)
+        ttk.Button(pixel_btn_frame, text="Right", command=lambda: self.bulk_crop_1px('right')).pack(side='left', padx=5)
+        ttk.Button(pixel_btn_frame, text="Top", command=lambda: self.bulk_crop_1px('top')).pack(side='left', padx=5)
+        ttk.Button(pixel_btn_frame, text="Bottom", command=lambda: self.bulk_crop_1px('bottom')).pack(side='left', padx=5)
+
+        # Progress bar
+        self.bulk_crop_progress = ttk.Progressbar(left_frame, mode='determinate')
+        self.bulk_crop_progress.pack(fill='x', pady=5)
+
+        self.bulk_crop_status = tk.StringVar(value="Ready - Select a folder and load preview")
+        ttk.Label(left_frame, textvariable=self.bulk_crop_status).pack(pady=5)
+
+    def browse_bulk_crop_folder(self):
+        folder = filedialog.askdirectory(title="Select Image Folder")
+        if folder:
+            self.bulk_crop_folder_path.set(folder)
+
+    def load_bulk_crop_preview(self):
+        folder = self.bulk_crop_folder_path.get()
+        if not folder or not os.path.isdir(folder):
+            messagebox.showerror("Error", "Please select a valid image folder")
+            return
+
+        # Find all image files
+        valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'}
+        self.bulk_crop_image_files = []
+        for f in os.listdir(folder):
+            ext = os.path.splitext(f)[1].lower()
+            if ext in valid_extensions:
+                self.bulk_crop_image_files.append(os.path.join(folder, f))
+
+        self.bulk_crop_image_files.sort()
+
+        if not self.bulk_crop_image_files:
+            messagebox.showerror("Error", "No valid image files found in the folder")
+            return
+
+        self.bulk_crop_image_count.set(f"{len(self.bulk_crop_image_files)} images found")
+        self.bulk_crop_current_index = 0
+        self.display_bulk_crop_image()
+        self.bulk_crop_status.set("Preview loaded. Click and drag to select crop region.")
+
+    def display_bulk_crop_image(self):
+        if not self.bulk_crop_image_files:
+            return
+
+        img_path = self.bulk_crop_image_files[self.bulk_crop_current_index]
+
+        # Load image with OpenCV
+        frame = cv2.imread(img_path)
+        if frame is None:
+            messagebox.showerror("Error", f"Could not read image: {os.path.basename(img_path)}")
+            return
+
+        self.bulk_crop_original_frame = frame
+        original_height, original_width = frame.shape[:2]
+
+        # Calculate scale factor to fit in canvas
+        max_width = 640
+        max_height = 480
+
+        width_scale = max_width / original_width
+        height_scale = max_height / original_height
+        self.bulk_crop_scale_factor = min(width_scale, height_scale, 1.0)
+
+        if self.bulk_crop_scale_factor < 1.0:
+            display_width = int(original_width * self.bulk_crop_scale_factor)
+            display_height = int(original_height * self.bulk_crop_scale_factor)
+            frame = cv2.resize(frame, (display_width, display_height))
+
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        self.bulk_crop_image = Image.fromarray(frame_rgb)
+        self.bulk_crop_photo = ImageTk.PhotoImage(self.bulk_crop_image)
+
+        self.bulk_crop_canvas.config(width=self.bulk_crop_image.width, height=self.bulk_crop_image.height)
+        self.bulk_crop_canvas.delete("all")
+        self.bulk_crop_canvas.create_image(0, 0, anchor='nw', image=self.bulk_crop_photo)
+
+        # Update navigation labels
+        self.bulk_crop_nav_label.set(f"Image: {self.bulk_crop_current_index + 1} / {len(self.bulk_crop_image_files)}")
+        self.bulk_crop_filename_label.set(os.path.basename(img_path))
+
+        # Redraw crop rectangle if exists
+        if self.bulk_crop_box:
+            self.redraw_bulk_crop_rect()
+
+    def redraw_bulk_crop_rect(self):
+        if self.bulk_crop_box and self.bulk_crop_scale_factor:
+            # Convert original coordinates to display coordinates
+            x1 = int(self.bulk_crop_box[0] * self.bulk_crop_scale_factor)
+            y1 = int(self.bulk_crop_box[1] * self.bulk_crop_scale_factor)
+            x2 = int(self.bulk_crop_box[2] * self.bulk_crop_scale_factor)
+            y2 = int(self.bulk_crop_box[3] * self.bulk_crop_scale_factor)
+
+            if self.bulk_crop_rect:
+                self.bulk_crop_canvas.delete(self.bulk_crop_rect)
+            self.bulk_crop_rect = self.bulk_crop_canvas.create_rectangle(
+                x1, y1, x2, y2, outline='red', width=2
+            )
+
+    def bulk_crop_prev_image(self):
+        if self.bulk_crop_image_files and self.bulk_crop_current_index > 0:
+            self.bulk_crop_current_index -= 1
+            self.display_bulk_crop_image()
+
+    def bulk_crop_next_image(self):
+        if self.bulk_crop_image_files and self.bulk_crop_current_index < len(self.bulk_crop_image_files) - 1:
+            self.bulk_crop_current_index += 1
+            self.display_bulk_crop_image()
+
+    def on_bulk_crop_press(self, event):
+        self.bulk_crop_start_x = event.x
+        self.bulk_crop_start_y = event.y
+        if self.bulk_crop_rect:
+            self.bulk_crop_canvas.delete(self.bulk_crop_rect)
+        self.bulk_crop_rect = self.bulk_crop_canvas.create_rectangle(
+            self.bulk_crop_start_x, self.bulk_crop_start_y,
+            self.bulk_crop_start_x, self.bulk_crop_start_y,
+            outline='red', width=2
+        )
+
+    def on_bulk_crop_drag(self, event):
+        if self.bulk_crop_rect:
+            self.bulk_crop_canvas.coords(
+                self.bulk_crop_rect,
+                self.bulk_crop_start_x, self.bulk_crop_start_y,
+                event.x, event.y
+            )
+
+    def on_bulk_crop_release(self, event):
+        if self.bulk_crop_start_x is None or self.bulk_crop_start_y is None:
+            return
+
+        x1 = min(self.bulk_crop_start_x, event.x)
+        y1 = min(self.bulk_crop_start_y, event.y)
+        x2 = max(self.bulk_crop_start_x, event.x)
+        y2 = max(self.bulk_crop_start_y, event.y)
+
+        # Convert to original image coordinates
+        orig_x1 = int(x1 / self.bulk_crop_scale_factor)
+        orig_y1 = int(y1 / self.bulk_crop_scale_factor)
+        orig_x2 = int(x2 / self.bulk_crop_scale_factor)
+        orig_y2 = int(y2 / self.bulk_crop_scale_factor)
+
+        self.bulk_crop_box = (orig_x1, orig_y1, orig_x2, orig_y2)
+        width = orig_x2 - orig_x1
+        height = orig_y2 - orig_y1
+        self.bulk_crop_coords.set(f"({orig_x1}, {orig_y1}, {orig_x2}, {orig_y2}) - {width}x{height}")
+
+    def clear_bulk_crop_selection(self):
+        if self.bulk_crop_rect:
+            self.bulk_crop_canvas.delete(self.bulk_crop_rect)
+            self.bulk_crop_rect = None
+        self.bulk_crop_box = None
+        self.bulk_crop_coords.set("Not selected")
+
+    def bulk_crop_all_images(self):
+        if not self.bulk_crop_box:
+            messagebox.showerror("Error", "Please select a crop region first")
+            return
+
+        if not self.bulk_crop_image_files:
+            messagebox.showerror("Error", "No images loaded")
+            return
+
+        # Confirm action
+        result = messagebox.askyesno(
+            "Confirm Bulk Crop",
+            f"This will crop {len(self.bulk_crop_image_files)} images to the selected region.\n\n"
+            f"Crop region: {self.bulk_crop_box}\n\n"
+            "Files will be overwritten. Continue?"
+        )
+        if not result:
+            return
+
+        def crop_thread():
+            try:
+                total = len(self.bulk_crop_image_files)
+                self.bulk_crop_progress['maximum'] = total
+                self.bulk_crop_progress['value'] = 0
+
+                left, top, right, bottom = self.bulk_crop_box
+                successful = 0
+                failed = []
+
+                for i, img_path in enumerate(self.bulk_crop_image_files):
+                    self.bulk_crop_status.set(f"Cropping {i+1}/{total}: {os.path.basename(img_path)}")
+
+                    try:
+                        # Read image
+                        img = cv2.imread(img_path)
+                        if img is None:
+                            failed.append((img_path, "Could not read image"))
+                            continue
+
+                        # Crop image
+                        cropped = img[top:bottom, left:right]
+
+                        # Save back (overwrite)
+                        cv2.imwrite(img_path, cropped)
+                        successful += 1
+
+                    except Exception as e:
+                        failed.append((img_path, str(e)))
+
+                    self.bulk_crop_progress['value'] = i + 1
+
+                self.bulk_crop_progress['value'] = total
+
+                if failed:
+                    self.bulk_crop_status.set(f"Done with errors: {successful} succeeded, {len(failed)} failed")
+                    error_details = "\n".join([f"{os.path.basename(f)}: {e}" for f, e in failed[:5]])
+                    if len(failed) > 5:
+                        error_details += f"\n... and {len(failed) - 5} more"
+                    self.root.after(0, lambda: messagebox.showwarning(
+                        "Partial Success",
+                        f"Cropped {successful}/{total} images.\n\nFailed:\n{error_details}"
+                    ))
+                else:
+                    self.bulk_crop_status.set(f"Done! Cropped {total} images")
+                    self.root.after(0, lambda: messagebox.showinfo(
+                        "Success",
+                        f"Bulk crop complete!\n{total} images cropped and saved."
+                    ))
+
+                # Reload the current image to show cropped result
+                self.root.after(0, self.display_bulk_crop_image)
+                # Clear the selection since image dimensions changed
+                self.root.after(0, self.clear_bulk_crop_selection)
+
+            except Exception as e:
+                self.bulk_crop_progress['value'] = 0
+                self.bulk_crop_status.set("Error occurred")
+                self.root.after(0, lambda: messagebox.showerror("Error", f"Bulk crop failed: {str(e)}"))
+
+        threading.Thread(target=crop_thread, daemon=True).start()
+
+    def bulk_crop_1px(self, side):
+        """Crop 1 pixel from the specified side of all images"""
+        if not self.bulk_crop_image_files:
+            messagebox.showerror("Error", "No images loaded")
+            return
+
+        result = messagebox.askyesno(
+            "Confirm 1-Pixel Crop",
+            f"This will crop 1 pixel from the {side} of {len(self.bulk_crop_image_files)} images.\n\n"
+            "Files will be overwritten. Continue?"
+        )
+        if not result:
+            return
+
+        def crop_thread():
+            try:
+                total = len(self.bulk_crop_image_files)
+                self.bulk_crop_progress['maximum'] = total
+                self.bulk_crop_progress['value'] = 0
+
+                successful = 0
+                failed = []
+
+                for i, img_path in enumerate(self.bulk_crop_image_files):
+                    self.bulk_crop_status.set(f"Cropping {side} 1px - {i+1}/{total}: {os.path.basename(img_path)}")
+
+                    try:
+                        img = cv2.imread(img_path)
+                        if img is None:
+                            failed.append((img_path, "Could not read image"))
+                            continue
+
+                        h, w = img.shape[:2]
+
+                        if side == 'left':
+                            cropped = img[:, 1:]
+                        elif side == 'right':
+                            cropped = img[:, :w-1]
+                        elif side == 'top':
+                            cropped = img[1:, :]
+                        elif side == 'bottom':
+                            cropped = img[:h-1, :]
+                        else:
+                            failed.append((img_path, f"Unknown side: {side}"))
+                            continue
+
+                        cv2.imwrite(img_path, cropped)
+                        successful += 1
+
+                    except Exception as e:
+                        failed.append((img_path, str(e)))
+
+                    self.bulk_crop_progress['value'] = i + 1
+
+                self.bulk_crop_progress['value'] = total
+
+                if failed:
+                    self.bulk_crop_status.set(f"Done with errors: {successful} succeeded, {len(failed)} failed")
+                    error_details = "\n".join([f"{os.path.basename(f)}: {e}" for f, e in failed[:5]])
+                    self.root.after(0, lambda: messagebox.showwarning(
+                        "Partial Success",
+                        f"Cropped {successful}/{total} images.\n\nFailed:\n{error_details}"
+                    ))
+                else:
+                    self.bulk_crop_status.set(f"Done! Cropped 1px from {side} of {total} images")
+                    self.root.after(0, lambda: messagebox.showinfo(
+                        "Success",
+                        f"Cropped 1 pixel from {side} of {total} images."
+                    ))
+
+                # Reload to show result
+                self.root.after(0, self.display_bulk_crop_image)
+
+            except Exception as e:
+                self.bulk_crop_progress['value'] = 0
+                self.bulk_crop_status.set("Error occurred")
+                self.root.after(0, lambda: messagebox.showerror("Error", f"1-pixel crop failed: {str(e)}"))
+
+        threading.Thread(target=crop_thread, daemon=True).start()
+
+    def create_slow_pan_tab(self):
+        tab = tk.Frame(self.content_frame, bg='white')
+        self.add_tab(tab, "Slow Pan")
+
+        # Top section - file selection
+        top_frame = ttk.Frame(tab)
+        top_frame.pack(fill='x', padx=10, pady=10)
+
+        ttk.Label(top_frame, text="Input Video:").pack(side='left', padx=5)
+        self.slow_pan_input_path = tk.StringVar()
+        ttk.Entry(top_frame, textvariable=self.slow_pan_input_path, width=50).pack(side='left', padx=5)
+        ttk.Button(top_frame, text="Browse", command=self.browse_slow_pan_input).pack(side='left', padx=5)
+
+        self.slow_pan_video_info = tk.StringVar(value="No video selected")
+        ttk.Label(top_frame, textvariable=self.slow_pan_video_info, font=('Arial', 10)).pack(side='left', padx=10)
+
+        # Settings frame
+        settings_frame = ttk.LabelFrame(tab, text="Pan Settings")
+        settings_frame.pack(fill='x', padx=10, pady=10)
+
+        # Pan duration
+        dur_frame = ttk.Frame(settings_frame)
+        dur_frame.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(dur_frame, text="Pan Duration (seconds):").pack(side='left', padx=5)
+        self.slow_pan_duration = tk.StringVar(value="10")
+        ttk.Entry(dur_frame, textvariable=self.slow_pan_duration, width=10).pack(side='left', padx=5)
+
+        # Output dimensions
+        dims_frame = ttk.Frame(settings_frame)
+        dims_frame.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(dims_frame, text="Output Width:").pack(side='left', padx=5)
+        self.slow_pan_output_width = tk.StringVar(value="1080")
+        ttk.Entry(dims_frame, textvariable=self.slow_pan_output_width, width=8).pack(side='left', padx=5)
+
+        ttk.Label(dims_frame, text="Output Height:").pack(side='left', padx=15)
+        self.slow_pan_output_height = tk.StringVar(value="1920")
+        ttk.Entry(dims_frame, textvariable=self.slow_pan_output_height, width=8).pack(side='left', padx=5)
+
+        # Presets
+        presets_frame = ttk.Frame(settings_frame)
+        presets_frame.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(presets_frame, text="Presets:").pack(side='left', padx=5)
+        ttk.Button(presets_frame, text="Mobile Portrait (1080x1920)",
+                  command=lambda: self.set_slow_pan_dims(1080, 1920)).pack(side='left', padx=5)
+        ttk.Button(presets_frame, text="Mobile Landscape (1920x1080)",
+                  command=lambda: self.set_slow_pan_dims(1920, 1080)).pack(side='left', padx=5)
+
+        # Info label
+        info_frame = ttk.Frame(tab)
+        info_frame.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(info_frame, text="This will scale the video to fit the output height, then pan from left to right.",
+                 font=('Arial', 9, 'italic')).pack(anchor='w')
+
+        # Process button
+        ttk.Button(tab, text="Create Slow Pan Video", command=self.create_slow_pan_action).pack(pady=20)
+
+        # Progress
+        self.slow_pan_progress = ttk.Progressbar(tab, mode='determinate')
+        self.slow_pan_progress.pack(fill='x', padx=10, pady=5)
+
+        self.slow_pan_status = tk.StringVar(value="Ready - Select a video to begin")
+        ttk.Label(tab, textvariable=self.slow_pan_status).pack(pady=5)
+
+        # Load config
+        self.load_slow_pan_config()
+
+    def set_slow_pan_dims(self, width, height):
+        self.slow_pan_output_width.set(str(width))
+        self.slow_pan_output_height.set(str(height))
+
+    def browse_slow_pan_input(self):
+        filename = filedialog.askopenfilename(
+            title="Select Video File",
+            filetypes=[("Video files", "*.mp4 *.webm *.avi *.mov"), ("All files", "*.*")]
+        )
+        if filename:
+            self.slow_pan_input_path.set(filename)
+            # Show video info
+            try:
+                width, height = get_vid_dims(filename)
+                duration = get_video_duration(filename)
+                self.slow_pan_video_info.set(f"{width}x{height}, {duration:.1f}s")
+            except:
+                self.slow_pan_video_info.set("Could not read video info")
+
+    def save_slow_pan_config(self):
+        config = {
+            'pan_duration': self.slow_pan_duration.get(),
+            'output_width': self.slow_pan_output_width.get(),
+            'output_height': self.slow_pan_output_height.get(),
+        }
+        try:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            with open(SLOW_PAN_CONFIG_FILE, 'w') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            print(f"Failed to save slow pan config: {e}")
+
+    def load_slow_pan_config(self):
+        if not os.path.exists(SLOW_PAN_CONFIG_FILE):
+            return
+        try:
+            with open(SLOW_PAN_CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+
+            if config.get('pan_duration'):
+                self.slow_pan_duration.set(config['pan_duration'])
+            if config.get('output_width'):
+                self.slow_pan_output_width.set(config['output_width'])
+            if config.get('output_height'):
+                self.slow_pan_output_height.set(config['output_height'])
+        except Exception as e:
+            print(f"Failed to load slow pan config: {e}")
+
+    def create_slow_pan_action(self):
+        input_path = self.slow_pan_input_path.get()
+        if not input_path or not os.path.exists(input_path):
+            messagebox.showerror("Error", "Please select a valid input video")
+            return
+
+        try:
+            pan_duration = int(self.slow_pan_duration.get())
+            output_width = int(self.slow_pan_output_width.get())
+            output_height = int(self.slow_pan_output_height.get())
+
+            if pan_duration <= 0:
+                raise ValueError("Duration must be positive")
+            if output_width <= 0 or output_height <= 0:
+                raise ValueError("Dimensions must be positive")
+        except ValueError as e:
+            messagebox.showerror("Error", f"Invalid settings: {e}")
+            return
+
+        # Save config
+        self.save_slow_pan_config()
+
+        def progress_callback(current, total):
+            self.slow_pan_progress['maximum'] = total
+            self.slow_pan_progress['value'] = current
+            self.slow_pan_status.set(f"Processing frame {current}/{total}...")
+
+        def pan_thread():
+            try:
+                self.slow_pan_status.set("Creating slow pan video...")
+
+                output = slow_pan_video(
+                    input_path,
+                    pan_duration,
+                    output_width=output_width,
+                    output_height=output_height,
+                    progress_callback=lambda c, t: self.root.after(0, lambda: progress_callback(c, t))
+                )
+
+                self.root.after(0, lambda: self.slow_pan_progress.configure(value=0))
+                self.root.after(0, lambda: self.slow_pan_status.set(f"Done! Saved to: {os.path.basename(output)}"))
+                self.root.after(0, lambda: messagebox.showinfo("Success", f"Slow pan video created!\n{output}"))
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                error_msg = str(e)
+                self.root.after(0, lambda: self.slow_pan_progress.configure(value=0))
+                self.root.after(0, lambda: self.slow_pan_status.set("Error occurred"))
+                self.root.after(0, lambda msg=error_msg: messagebox.showerror("Error", f"Slow pan failed: {msg}"))
+
+        threading.Thread(target=pan_thread, daemon=True).start()
+
+    def create_collage_tab(self):
+        tab = tk.Frame(self.content_frame, bg='white')
+        self.add_tab(tab, "Collage Generator")
+
+        # Track number of images for duration calculation
+        self.collage_num_images = 0
+
+        # Main layout - two columns
+        main_frame = ttk.Frame(tab)
+        main_frame.pack(fill='both', expand=True, padx=10, pady=10)
+
+        # Left column - inputs
+        left_frame = ttk.Frame(main_frame)
+        left_frame.pack(side='left', fill='both', expand=True, padx=(0, 10))
+
+        # Image folder selection
+        folder_frame = ttk.LabelFrame(left_frame, text="Image Folder")
+        folder_frame.pack(fill='x', pady=5)
+
+        folder_row = ttk.Frame(folder_frame)
+        folder_row.pack(fill='x', padx=10, pady=5)
+
+        self.collage_folder_path = tk.StringVar()
+        ttk.Entry(folder_row, textvariable=self.collage_folder_path, width=40).pack(side='left', padx=(0, 5))
+        ttk.Button(folder_row, text="Browse", command=self.browse_collage_folder).pack(side='left')
+
+        self.collage_image_count = tk.StringVar(value="No folder selected")
+        ttk.Label(folder_frame, textvariable=self.collage_image_count).pack(padx=10, pady=(0, 5))
+
+        # Canvas dimensions
+        dims_frame = ttk.LabelFrame(left_frame, text="Output Video Dimensions")
+        dims_frame.pack(fill='x', pady=5)
+
+        dims_row = ttk.Frame(dims_frame)
+        dims_row.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(dims_row, text="Width:").pack(side='left', padx=(0, 5))
+        self.collage_canvas_width = tk.StringVar(value="1080")
+        ttk.Entry(dims_row, textvariable=self.collage_canvas_width, width=8).pack(side='left', padx=(0, 15))
+
+        ttk.Label(dims_row, text="Height:").pack(side='left', padx=(0, 5))
+        self.collage_canvas_height = tk.StringVar(value="1920")
+        ttk.Entry(dims_row, textvariable=self.collage_canvas_height, width=8).pack(side='left')
+
+        presets_row = ttk.Frame(dims_frame)
+        presets_row.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(presets_row, text="Presets:").pack(side='left', padx=(0, 5))
+        ttk.Button(presets_row, text="Mobile (1080x1920)",
+                  command=lambda: self.set_collage_dims(1080, 1920)).pack(side='left', padx=2)
+        ttk.Button(presets_row, text="Desktop (1920x1080)",
+                  command=lambda: self.set_collage_dims(1920, 1080)).pack(side='left', padx=2)
+
+        # Image height range
+        height_frame = ttk.LabelFrame(left_frame, text="Overlay Image Height Range")
+        height_frame.pack(fill='x', pady=5)
+
+        height_row = ttk.Frame(height_frame)
+        height_row.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(height_row, text="Min Height:").pack(side='left', padx=(0, 5))
+        self.collage_height_min = tk.StringVar(value="100")
+        ttk.Entry(height_row, textvariable=self.collage_height_min, width=8).pack(side='left', padx=(0, 15))
+
+        ttk.Label(height_row, text="Max Height:").pack(side='left', padx=(0, 5))
+        self.collage_height_max = tk.StringVar(value="300")
+        ttk.Entry(height_row, textvariable=self.collage_height_max, width=8).pack(side='left')
+
+        # Collage rate
+        rate_frame = ttk.LabelFrame(left_frame, text="Collage Rate (seconds between images)")
+        rate_frame.pack(fill='x', pady=5)
+
+        rate_row = ttk.Frame(rate_frame)
+        rate_row.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(rate_row, text="Start Rate:").pack(side='left', padx=(0, 5))
+        self.collage_start_rate = tk.StringVar(value="0.5")
+        ttk.Entry(rate_row, textvariable=self.collage_start_rate, width=8).pack(side='left', padx=(0, 15))
+
+        ttk.Label(rate_row, text="End Rate:").pack(side='left', padx=(0, 5))
+        self.collage_end_rate = tk.StringVar(value="0.1")
+        ttk.Entry(rate_row, textvariable=self.collage_end_rate, width=8).pack(side='left')
+
+        # Expected duration display
+        self.collage_expected_duration = tk.StringVar(value="Expected duration: --")
+        ttk.Label(rate_frame, textvariable=self.collage_expected_duration, font=('Arial', 10, 'bold')).pack(padx=10, pady=5)
+
+        # Add traces to update expected duration
+        self.collage_start_rate.trace_add('write', self.update_collage_expected_duration)
+        self.collage_end_rate.trace_add('write', self.update_collage_expected_duration)
+
+        # Right column
+        right_frame = ttk.Frame(main_frame)
+        right_frame.pack(side='right', fill='both', expand=True)
+
+        # Rotation settings
+        rotation_frame = ttk.LabelFrame(right_frame, text="Random Rotation (degrees)")
+        rotation_frame.pack(fill='x', pady=5)
+
+        rot_row = ttk.Frame(rotation_frame)
+        rot_row.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(rot_row, text="Left (CCW):").pack(side='left', padx=(0, 5))
+        self.collage_rotation_left = tk.StringVar(value="15")
+        ttk.Entry(rot_row, textvariable=self.collage_rotation_left, width=8).pack(side='left', padx=(0, 15))
+
+        ttk.Label(rot_row, text="Right (CW):").pack(side='left', padx=(0, 5))
+        self.collage_rotation_right = tk.StringVar(value="15")
+        ttk.Entry(rot_row, textvariable=self.collage_rotation_right, width=8).pack(side='left')
+
+        # Output folder selection
+        output_frame = ttk.LabelFrame(right_frame, text="Output Folder")
+        output_frame.pack(fill='x', pady=5)
+
+        output_row = ttk.Frame(output_frame)
+        output_row.pack(fill='x', padx=10, pady=5)
+
+        self.collage_output_folder = tk.StringVar()
+        ttk.Entry(output_row, textvariable=self.collage_output_folder, width=40).pack(side='left', padx=(0, 5))
+        ttk.Button(output_row, text="Browse", command=self.browse_collage_output).pack(side='left')
+
+        ttk.Label(output_frame, text="Output will be saved as collage.mp4").pack(padx=10, pady=(0, 5))
+
+        # Create button
+        ttk.Button(right_frame, text="Create Collage Video", command=self.create_collage_action).pack(pady=20)
+
+        # Progress
+        self.collage_progress = ttk.Progressbar(right_frame, mode='determinate')
+        self.collage_progress.pack(fill='x', pady=5)
+
+        self.collage_status = tk.StringVar(value="Ready - Select an image folder to begin")
+        ttk.Label(right_frame, textvariable=self.collage_status).pack(pady=5)
+
+        # Load config
+        self.load_collage_config()
+
+    def set_collage_dims(self, width, height):
+        self.collage_canvas_width.set(str(width))
+        self.collage_canvas_height.set(str(height))
+
+    def browse_collage_folder(self):
+        folder = filedialog.askdirectory(title="Select Image Folder")
+        if folder:
+            self.collage_folder_path.set(folder)
+            # Count valid images
+            valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'}
+            count = sum(1 for f in os.listdir(folder)
+                       if os.path.splitext(f)[1].lower() in valid_extensions)
+            self.collage_num_images = count
+            self.collage_image_count.set(f"{count} images found")
+            self.update_collage_expected_duration()
+
+    def browse_collage_output(self):
+        folder = filedialog.askdirectory(title="Select Output Folder")
+        if folder:
+            self.collage_output_folder.set(folder)
+
+    def update_collage_expected_duration(self, *args):
+        try:
+            start_rate = float(self.collage_start_rate.get())
+            end_rate = float(self.collage_end_rate.get())
+            n = self.collage_num_images
+
+            if n <= 0:
+                self.collage_expected_duration.set("Expected duration: --")
+                return
+
+            # Calculate total duration (sum of linearly interpolated rates)
+            total_seconds = 0
+            for i in range(n):
+                t = i / (n - 1) if n > 1 else 0
+                rate = start_rate + t * (end_rate - start_rate)
+                total_seconds += rate
+
+            # Format as mm:ss or hh:mm:ss
+            minutes = int(total_seconds // 60)
+            seconds = total_seconds % 60
+            if minutes >= 60:
+                hours = minutes // 60
+                minutes = minutes % 60
+                time_str = f"{hours}h {minutes}m {seconds:.1f}s"
+            elif minutes > 0:
+                time_str = f"{minutes}m {seconds:.1f}s"
+            else:
+                time_str = f"{seconds:.1f}s"
+
+            self.collage_expected_duration.set(f"Expected duration: {time_str}")
+        except (ValueError, AttributeError):
+            self.collage_expected_duration.set("Expected duration: --")
+
+    def save_collage_config(self):
+        config = {
+            'folder_path': self.collage_folder_path.get(),
+            'canvas_width': self.collage_canvas_width.get(),
+            'canvas_height': self.collage_canvas_height.get(),
+            'height_min': self.collage_height_min.get(),
+            'height_max': self.collage_height_max.get(),
+            'start_rate': self.collage_start_rate.get(),
+            'end_rate': self.collage_end_rate.get(),
+            'rotation_left': self.collage_rotation_left.get(),
+            'rotation_right': self.collage_rotation_right.get(),
+            'output_folder': self.collage_output_folder.get(),
+        }
+        try:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            with open(COLLAGE_CONFIG_FILE, 'w') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            print(f"Failed to save collage config: {e}")
+
+    def load_collage_config(self):
+        if not os.path.exists(COLLAGE_CONFIG_FILE):
+            return
+        try:
+            with open(COLLAGE_CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+
+            if config.get('folder_path'):
+                self.collage_folder_path.set(config['folder_path'])
+                if os.path.isdir(config['folder_path']):
+                    valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'}
+                    count = sum(1 for f in os.listdir(config['folder_path'])
+                               if os.path.splitext(f)[1].lower() in valid_extensions)
+                    self.collage_num_images = count
+                    self.collage_image_count.set(f"{count} images found")
+
+            if config.get('canvas_width'):
+                self.collage_canvas_width.set(config['canvas_width'])
+            if config.get('canvas_height'):
+                self.collage_canvas_height.set(config['canvas_height'])
+            if config.get('height_min'):
+                self.collage_height_min.set(config['height_min'])
+            if config.get('height_max'):
+                self.collage_height_max.set(config['height_max'])
+            if config.get('start_rate'):
+                self.collage_start_rate.set(config['start_rate'])
+            if config.get('end_rate'):
+                self.collage_end_rate.set(config['end_rate'])
+            if config.get('rotation_left'):
+                self.collage_rotation_left.set(config['rotation_left'])
+            if config.get('rotation_right'):
+                self.collage_rotation_right.set(config['rotation_right'])
+            if config.get('output_folder'):
+                self.collage_output_folder.set(config['output_folder'])
+
+            self.update_collage_expected_duration()
+        except Exception as e:
+            print(f"Failed to load collage config: {e}")
+
+    def create_collage_action(self):
+        # Validate inputs
+        image_folder = self.collage_folder_path.get()
+        if not image_folder or not os.path.isdir(image_folder):
+            messagebox.showerror("Error", "Please select a valid image folder")
+            return
+
+        output_folder = self.collage_output_folder.get()
+        if not output_folder or not os.path.isdir(output_folder):
+            messagebox.showerror("Error", "Please select a valid output folder")
+            return
+
+        try:
+            canvas_width = int(self.collage_canvas_width.get())
+            canvas_height = int(self.collage_canvas_height.get())
+            height_min = int(self.collage_height_min.get())
+            height_max = int(self.collage_height_max.get())
+            start_rate = float(self.collage_start_rate.get())
+            end_rate = float(self.collage_end_rate.get())
+            rotation_left = int(self.collage_rotation_left.get())
+            rotation_right = int(self.collage_rotation_right.get())
+
+            if canvas_width <= 0 or canvas_height <= 0:
+                raise ValueError("Canvas dimensions must be positive")
+            if height_min <= 0 or height_max <= 0 or height_min > height_max:
+                raise ValueError("Invalid height range")
+            if start_rate <= 0 or end_rate <= 0:
+                raise ValueError("Rates must be positive")
+        except ValueError as e:
+            messagebox.showerror("Error", f"Invalid settings: {e}")
+            return
+
+        # Save config
+        self.save_collage_config()
+
+        output_path = os.path.join(output_folder, "collage.mp4")
+
+        def progress_callback(current, total):
+            self.collage_progress['maximum'] = total
+            self.collage_progress['value'] = current
+
+        def collage_thread():
+            try:
+                self.collage_status.set("Creating collage video...")
+
+                output, duration = create_collage_video(
+                    image_folder=image_folder,
+                    output_path=output_path,
+                    canvas_width=canvas_width,
+                    canvas_height=canvas_height,
+                    height_min=height_min,
+                    height_max=height_max,
+                    start_rate=start_rate,
+                    end_rate=end_rate,
+                    rotation_left=rotation_left,
+                    rotation_right=rotation_right,
+                    progress_callback=lambda c, t: self.root.after(0, lambda: progress_callback(c, t))
+                )
+
+                self.root.after(0, lambda: self.collage_progress.configure(value=0))
+                self.root.after(0, lambda: self.collage_status.set(f"Done! Duration: {duration:.1f}s - Saved to: {output_path}"))
+                self.root.after(0, lambda: messagebox.showinfo("Success", f"Collage video created!\nDuration: {duration:.1f}s\n{output_path}"))
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                error_msg = str(e)
+                self.root.after(0, lambda: self.collage_progress.configure(value=0))
+                self.root.after(0, lambda: self.collage_status.set("Error occurred"))
+                self.root.after(0, lambda msg=error_msg: messagebox.showerror("Error", f"Collage creation failed: {msg}"))
+
+        threading.Thread(target=collage_thread, daemon=True).start()
 
 
 if __name__ == "__main__":

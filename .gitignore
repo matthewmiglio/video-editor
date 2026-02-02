@@ -69,3 +69,6 @@ dmypy.json
 # temp files
 *.mp4
 *.mp3
+
+# Config
+config/
