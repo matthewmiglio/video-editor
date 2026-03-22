@@ -13,7 +13,7 @@ CONFIG_DIR = os.path.join(os.path.dirname(__file__), "config")
 SLIDESHOW_CONFIG_FILE = os.path.join(CONFIG_DIR, "slideshow_config.json")
 SLOW_PAN_CONFIG_FILE = os.path.join(CONFIG_DIR, "slow_pan_config.json")
 COLLAGE_CONFIG_FILE = os.path.join(CONFIG_DIR, "collage_config.json")
-from main import (
+from cli import (
     mp4_to_webm, webm_to_mp4, mkv_to_mp4, convert_mp4_to_gif, mp4_to_mp3,
     crop_video, get_subclip, speed_up_mp4_video, blur_video,
     stretch_video_dims, get_vid_dims, mute_video, get_video_duration,

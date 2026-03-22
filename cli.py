@@ -1,17 +1,27 @@
+#!/usr/bin/env python3
+"""
+Video Editor CLI - Command-line interface for video editing operations.
+
+Usage:
+    python cli.py <command> [options]
+
+Run 'python cli.py --help' for full usage information.
+"""
+import argparse
 import os
+import sys
 import time
+
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 from moviepy import vfx
 from moviepy.video.io.VideoFileClip import VideoFileClip
 
-from moviepy.video.io.VideoFileClip import VideoFileClip
 
-
-import os
-from moviepy.video.io.VideoFileClip import VideoFileClip
-
+# ---------------------------------------------------------------------------
+# Video processing functions
+# ---------------------------------------------------------------------------
 
 def mp4_to_webm(input_video_path, crf=32, use_opus=True):
     """
@@ -68,7 +78,6 @@ def webm_to_mp4(input_video_path, crf=20, preset="medium"):
         ffmpeg_params=["-crf", str(crf), "-preset", preset],
     )
     return output_path
-
 
 
 def mkv_to_mp4(input_video_path, crf=20, preset="medium"):
@@ -957,11 +966,268 @@ def create_collage_video(
     return output_path, total_duration
 
 
-if __name__ == "__main__":
-    file_path = r"C:\Users\matmi\Downloads\Untitled video - Made with Clipchamp (4).mp4"
-    print(f'    Processing file: {file_path}')
-    new_res = (589,330)
-    stretch_video_dims(file_path, new_res[0], new_res[1])
+# ---------------------------------------------------------------------------
+# CLI command handlers
+# ---------------------------------------------------------------------------
 
-        
-    
+def cmd_convert(args):
+    input_path = args.input
+    fmt = args.format.lower()
+
+    if fmt == "webm":
+        result = mp4_to_webm(input_path, crf=args.crf)
+    elif fmt == "mp4":
+        ext = os.path.splitext(input_path)[1].lower()
+        if ext == ".webm":
+            result = webm_to_mp4(input_path, crf=args.crf, preset=args.preset)
+        elif ext == ".mkv":
+            result = mkv_to_mp4(input_path, crf=args.crf, preset=args.preset)
+        else:
+            print(f"Error: Cannot convert {ext} to mp4. Supported sources: .webm, .mkv")
+            sys.exit(1)
+    elif fmt == "gif":
+        result = convert_mp4_to_gif(input_path)
+    elif fmt == "mp3":
+        result = mp4_to_mp3(input_path)
+    else:
+        print(f"Error: Unsupported format '{fmt}'. Use: webm, mp4, gif, mp3")
+        sys.exit(1)
+
+    print(f"Output: {result}")
+
+
+def cmd_crop(args):
+    if args.box:
+        box = tuple(map(int, args.box.split(",")))
+        if len(box) != 4:
+            print("Error: --box must be 4 comma-separated integers: left,top,right,bottom")
+            sys.exit(1)
+    else:
+        print("Select crop region interactively...")
+        box = select_roi_from_video(args.input)
+
+    crop_video(args.input, box)
+
+
+def cmd_trim(args):
+    result = get_subclip(args.input, args.start, args.end)
+    print(f"Output: {result}")
+
+
+def cmd_speed(args):
+    result = speed_up_mp4_video(args.input, args.factor)
+    print(f"Output: {result}")
+
+
+def cmd_blur(args):
+    if args.region:
+        region = tuple(map(int, args.region.split(",")))
+        if len(region) != 4:
+            print("Error: --region must be 4 comma-separated integers: left,top,right,bottom")
+            sys.exit(1)
+    else:
+        print("Select blur region interactively...")
+        region = select_roi_from_video(args.input)
+
+    result = blur_video(args.input, region)
+    print(f"Output: {result}")
+
+
+def cmd_resize(args):
+    if args.info:
+        w, h = get_vid_dims(args.input)
+        dur = get_video_duration(args.input)
+        print(f"Dimensions: {w}x{h}")
+        print(f"Duration: {dur:.2f}s")
+        return
+
+    if not args.width or not args.height:
+        print("Error: --width and --height are required (or use --info to view dimensions)")
+        sys.exit(1)
+
+    result = stretch_video_dims(args.input, args.width, args.height)
+    print(f"Output: {result}")
+
+
+def cmd_audio(args):
+    if args.mute:
+        result = mute_video(args.input)
+        print(f"Output: {result}")
+    elif args.extract:
+        result = mp4_to_mp3(args.input)
+        print(f"Output: {result}")
+    else:
+        print("Error: Specify --mute or --extract")
+        sys.exit(1)
+
+
+def cmd_brightness(args):
+    result = adjust_brightness_video(args.input, args.factor)
+    print(f"Output: {result}")
+
+
+def cmd_slideshow(args):
+    result = create_slideshow(
+        image_folder=args.folder,
+        output_path=args.output,
+        start_duration=args.start_duration,
+        end_duration=args.end_duration,
+        shuffle_images=args.shuffle,
+        random_rotation=args.rotate,
+        rotation_left=args.rotate_left,
+        rotation_right=args.rotate_right,
+        sound_effect_path=args.sound,
+        scale_mode=args.scale_mode,
+    )
+    print(f"Output: {result}")
+
+
+def cmd_slowpan(args):
+    result = slow_pan_video(
+        input_video_path=args.input,
+        pan_duration=args.duration,
+        output_width=args.width,
+        output_height=args.height,
+    )
+    print(f"Output: {result}")
+
+
+def cmd_collage(args):
+    result, duration = create_collage_video(
+        image_folder=args.folder,
+        output_path=args.output,
+        canvas_width=args.width,
+        canvas_height=args.height,
+        height_min=args.height_min,
+        height_max=args.height_max,
+        start_rate=args.start_rate,
+        end_rate=args.end_rate,
+        rotation_left=args.rotate_left,
+        rotation_right=args.rotate_right,
+        fps=args.fps,
+    )
+    print(f"Output: {result} ({duration:.2f}s)")
+
+
+def cmd_info(args):
+    w, h = get_vid_dims(args.input)
+    dur = get_video_duration(args.input)
+    print(f"File:       {os.path.basename(args.input)}")
+    print(f"Dimensions: {w}x{h}")
+    print(f"Duration:   {dur:.2f}s")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="video-editor",
+        description="Video Editor CLI - All video editing operations from the command line.",
+    )
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # convert
+    p = subparsers.add_parser("convert", help="Convert video between formats (webm, mp4, gif, mp3)")
+    p.add_argument("input", help="Input video file path")
+    p.add_argument("format", help="Target format: webm, mp4, gif, mp3")
+    p.add_argument("--crf", type=int, default=20, help="Quality (CRF value, default: 20)")
+    p.add_argument("--preset", default="medium", help="Encoding preset (default: medium)")
+    p.set_defaults(func=cmd_convert)
+
+    # crop
+    p = subparsers.add_parser("crop", help="Crop video to a region")
+    p.add_argument("input", help="Input video file path")
+    p.add_argument("--box", help="Crop box as left,top,right,bottom (e.g. 100,50,500,400). Interactive if omitted.")
+    p.set_defaults(func=cmd_crop)
+
+    # trim
+    p = subparsers.add_parser("trim", help="Trim/subclip video to a time range")
+    p.add_argument("input", help="Input video file path")
+    p.add_argument("start", type=float, help="Start time in seconds")
+    p.add_argument("end", type=float, help="End time in seconds")
+    p.set_defaults(func=cmd_trim)
+
+    # speed
+    p = subparsers.add_parser("speed", help="Change video playback speed")
+    p.add_argument("input", help="Input video file path")
+    p.add_argument("factor", type=float, help="Speed multiplier (e.g. 2.0 = 2x faster, 0.5 = half speed)")
+    p.set_defaults(func=cmd_speed)
+
+    # blur
+    p = subparsers.add_parser("blur", help="Blur a region of the video")
+    p.add_argument("input", help="Input video file path")
+    p.add_argument("--region", help="Blur region as left,top,right,bottom (e.g. 100,50,500,400). Interactive if omitted.")
+    p.set_defaults(func=cmd_blur)
+
+    # resize
+    p = subparsers.add_parser("resize", help="Resize/stretch video dimensions")
+    p.add_argument("input", help="Input video file path")
+    p.add_argument("--width", type=int, help="New width")
+    p.add_argument("--height", type=int, help="New height")
+    p.add_argument("--info", action="store_true", help="Just show current dimensions and duration")
+    p.set_defaults(func=cmd_resize)
+
+    # audio
+    p = subparsers.add_parser("audio", help="Audio operations (mute or extract)")
+    p.add_argument("input", help="Input video file path")
+    p.add_argument("--mute", action="store_true", help="Mute the video audio")
+    p.add_argument("--extract", action="store_true", help="Extract audio to MP3")
+    p.set_defaults(func=cmd_audio)
+
+    # brightness
+    p = subparsers.add_parser("brightness", help="Adjust video brightness")
+    p.add_argument("input", help="Input video file path")
+    p.add_argument("factor", type=float, help="Brightness factor (1.0 = no change, >1.0 = brighter, <1.0 = darker)")
+    p.set_defaults(func=cmd_brightness)
+
+    # slideshow
+    p = subparsers.add_parser("slideshow", help="Create slideshow video from images")
+    p.add_argument("folder", help="Folder containing images")
+    p.add_argument("output", help="Output video file path")
+    p.add_argument("--start-duration", type=float, default=3.0, help="Duration for first image in seconds (default: 3.0)")
+    p.add_argument("--end-duration", type=float, default=1.0, help="Duration for last image in seconds (default: 1.0)")
+    p.add_argument("--shuffle", action="store_true", help="Shuffle image order")
+    p.add_argument("--rotate", action="store_true", help="Apply random rotation to images")
+    p.add_argument("--rotate-left", type=float, default=0, help="Max left rotation degrees (default: 0)")
+    p.add_argument("--rotate-right", type=float, default=0, help="Max right rotation degrees (default: 0)")
+    p.add_argument("--sound", help="Sound effect file to play on each transition")
+    p.add_argument("--scale-mode", choices=["stretch", "fit", "crop"], default="stretch", help="Image scaling mode (default: stretch)")
+    p.set_defaults(func=cmd_slideshow)
+
+    # slowpan
+    p = subparsers.add_parser("slowpan", help="Create slow pan effect (landscape to portrait)")
+    p.add_argument("input", help="Input video file path")
+    p.add_argument("duration", type=float, help="Pan duration in seconds")
+    p.add_argument("--width", type=int, default=1080, help="Output width (default: 1080)")
+    p.add_argument("--height", type=int, default=1920, help="Output height (default: 1920)")
+    p.set_defaults(func=cmd_slowpan)
+
+    # collage
+    p = subparsers.add_parser("collage", help="Create collage video from images")
+    p.add_argument("folder", help="Folder containing images")
+    p.add_argument("output", help="Output video file path")
+    p.add_argument("--width", type=int, default=1080, help="Canvas width (default: 1080)")
+    p.add_argument("--height", type=int, default=1920, help="Canvas height (default: 1920)")
+    p.add_argument("--height-min", type=int, default=100, help="Min image height (default: 100)")
+    p.add_argument("--height-max", type=int, default=300, help="Max image height (default: 300)")
+    p.add_argument("--start-rate", type=float, default=0.5, help="Seconds between images at start (default: 0.5)")
+    p.add_argument("--end-rate", type=float, default=0.1, help="Seconds between images at end (default: 0.1)")
+    p.add_argument("--rotate-left", type=float, default=15, help="Max left rotation degrees (default: 15)")
+    p.add_argument("--rotate-right", type=float, default=15, help="Max right rotation degrees (default: 15)")
+    p.add_argument("--fps", type=int, default=30, help="Output framerate (default: 30)")
+    p.set_defaults(func=cmd_collage)
+
+    # info
+    p = subparsers.add_parser("info", help="Show video file information")
+    p.add_argument("input", help="Input video file path")
+    p.set_defaults(func=cmd_info)
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
