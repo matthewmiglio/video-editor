@@ -1015,7 +1015,17 @@ def cmd_trim(args):
 
 
 def cmd_speed(args):
-    result = speed_up_mp4_video(args.input, args.factor)
+    if args.duration:
+        clip = VideoFileClip(args.input)
+        factor = clip.duration / args.duration
+        clip.close()
+        print(f"Target duration: {args.duration}s → speed factor: {factor:.2f}x")
+    elif args.factor:
+        factor = args.factor
+    else:
+        print("Error: provide either a speed factor or --duration")
+        sys.exit(1)
+    result = speed_up_mp4_video(args.input, factor)
     print(f"Output: {result}")
 
 
@@ -1148,7 +1158,8 @@ def main():
     # speed
     p = subparsers.add_parser("speed", help="Change video playback speed")
     p.add_argument("input", help="Input video file path")
-    p.add_argument("factor", type=float, help="Speed multiplier (e.g. 2.0 = 2x faster, 0.5 = half speed)")
+    p.add_argument("factor", type=float, nargs="?", default=None, help="Speed multiplier (e.g. 2.0 = 2x faster, 0.5 = half speed)")
+    p.add_argument("--duration", type=float, help="Desired output duration in seconds (auto-calculates speed factor)")
     p.set_defaults(func=cmd_speed)
 
     # blur
