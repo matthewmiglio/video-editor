@@ -282,10 +282,24 @@ def speed_up_mp4_video(input_video_path, speed_factor: float):
     clip.write_videofile(temp_output_path, codec="libx264")
     clip.close()
 
-    if os.path.exists(input_video_path):
-        os.remove(input_video_path)
+    import gc
+    import time as time_module
+    gc.collect()
+    time_module.sleep(1.5)
 
-    os.rename(temp_output_path, input_video_path)
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            if os.path.exists(input_video_path):
+                os.remove(input_video_path)
+            os.rename(temp_output_path, input_video_path)
+            break
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                print(f"File locked, retrying in 1 second... (attempt {attempt + 1}/{max_retries})")
+                time_module.sleep(1)
+            else:
+                raise Exception(f"Could not access file after {max_retries} attempts.") from e
 
     time_taken = round((time.time() - start_time), 2)
     print(f"Saved sped video as {os.path.basename(input_video_path)} in {time_taken}s (overwritten)")

@@ -66,6 +66,7 @@ class VideoEditorGUI:
         self.create_bulk_crop_images_tab()
         self.create_slow_pan_tab()
         self.create_collage_tab()
+        self.create_video_inspector_tab()
 
         # Show first tab by default
         self.show_tab(0)
@@ -291,15 +292,20 @@ class VideoEditorGUI:
 
                     try:
                         if format_type == "WEBM":
+                            print(f'\n[CLI] python cli.py convert "{input_path}" webm --crf {self.webm_crf_var.get()}')
                             output = mp4_to_webm(input_path, crf=self.webm_crf_var.get(), use_opus=self.use_opus_var.get())
                         elif format_type == "MP4":
                             if input_path.lower().endswith('.mkv'):
+                                print(f'\n[CLI] python cli.py convert "{input_path}" mp4 --crf {self.mp4_crf_var.get()} --preset {self.mp4_preset_var.get()}')
                                 output = mkv_to_mp4(input_path, crf=self.mp4_crf_var.get(), preset=self.mp4_preset_var.get())
                             else:
+                                print(f'\n[CLI] python cli.py convert "{input_path}" mp4 --crf {self.mp4_crf_var.get()} --preset {self.mp4_preset_var.get()}')
                                 output = webm_to_mp4(input_path, crf=self.mp4_crf_var.get(), preset=self.mp4_preset_var.get())
                         elif format_type == "GIF":
+                            print(f'\n[CLI] python cli.py convert "{input_path}" gif')
                             output = convert_mp4_to_gif(input_path)
                         elif format_type == "MP3":
+                            print(f'\n[CLI] python cli.py convert "{input_path}" mp3')
                             output = mp4_to_mp3(input_path)
                         successful.append(output)
                     except Exception as e:
@@ -510,6 +516,7 @@ class VideoEditorGUI:
         self.process_crop_job(job)
 
         box = self.crop_box
+        print(f'\n[CLI] python cli.py crop "{input_path}" --box {box[0]},{box[1]},{box[2]},{box[3]}')
         self.crop_status.set(f"Added to queue: {job['filename']} ({box[2]-box[0]}x{box[3]-box[1]})")
 
     def process_crop_job(self, job):
@@ -771,6 +778,7 @@ class VideoEditorGUI:
                 job['status'] = 'processing'
                 self.root.after(0, self.update_trim_queue_display)
 
+                print(f'\n[CLI] python cli.py trim "{job["input_path"]}" {job["start_time"]} {job["end_time"]}')
                 output = get_subclip(job['input_path'], job['start_time'], job['end_time'])
 
                 job['status'] = 'done'
@@ -870,7 +878,7 @@ class VideoEditorGUI:
             try:
                 self.speed_progress.start()
                 self.speed_status.set(f"Applying {speed_factor}x speed...")
-
+                print(f'\n[CLI] python cli.py speed "{input_path}" {speed_factor}')
                 output = speed_up_mp4_video(input_path, speed_factor)
 
                 self.speed_progress.stop()
@@ -1012,7 +1020,8 @@ class VideoEditorGUI:
             try:
                 self.blur_progress.start()
                 self.blur_status.set("Blurring video...")
-
+                _box = self.blur_box
+                print(f'\n[CLI] python cli.py blur "{input_path}" --region {_box[0]},{_box[1]},{_box[2]},{_box[3]}')
                 output = blur_video(input_path, self.blur_box)
 
                 self.blur_progress.stop()
@@ -1156,6 +1165,7 @@ class VideoEditorGUI:
                     self.resize_status.set(f"Resizing {i+1}/{total}: {os.path.basename(input_path)}")
 
                     try:
+                        print(f'\n[CLI] python cli.py resize "{input_path}" --width {new_width} --height {new_height}')
                         output = stretch_video_dims(input_path, new_width, new_height)
                         successful.append(output)
                     except Exception as e:
@@ -1225,7 +1235,7 @@ class VideoEditorGUI:
             try:
                 self.audio_progress.start()
                 self.audio_status.set("Muting video...")
-
+                print(f'\n[CLI] python cli.py audio "{input_path}" --mute')
                 output = mute_video(input_path)
 
                 self.audio_progress.stop()
@@ -1248,7 +1258,7 @@ class VideoEditorGUI:
             try:
                 self.audio_progress.start()
                 self.audio_status.set("Extracting audio...")
-
+                print(f'\n[CLI] python cli.py audio "{input_path}" --extract')
                 output = mp4_to_mp3(input_path)
 
                 self.audio_progress.stop()
@@ -1449,7 +1459,7 @@ class VideoEditorGUI:
             try:
                 self.brightness_progress.start()
                 self.brightness_status.set(f"Applying {brightness_factor:.2f}x brightness...")
-
+                print(f'\n[CLI] python cli.py brightness "{input_path}" {brightness_factor}')
                 output = adjust_brightness_video(input_path, brightness_factor)
 
                 self.brightness_progress.stop()
@@ -1755,7 +1765,10 @@ class VideoEditorGUI:
         def slideshow_thread():
             try:
                 self.slideshow_status.set("Creating slideshow...")
-
+                _sound_arg = f' --sound "{sound_path}"' if sound_path else ''
+                _shuffle_arg = ' --shuffle' if self.slideshow_shuffle.get() else ''
+                _rotate_arg = ' --rotate' if self.slideshow_random_rotation.get() else ''
+                print(f'\n[CLI] python cli.py slideshow "{image_folder}" "{output_path}" --start-duration {start_duration} --end-duration {end_duration} --rotate-left {rotation_left} --rotate-right {rotation_right} --scale-mode {self.slideshow_scale_mode.get()}{_shuffle_arg}{_rotate_arg}{_sound_arg}')
                 create_slideshow(
                     image_folder=image_folder,
                     output_path=output_path,
@@ -2339,7 +2352,7 @@ class VideoEditorGUI:
         def pan_thread():
             try:
                 self.slow_pan_status.set("Creating slow pan video...")
-
+                print(f'\n[CLI] python cli.py slowpan "{input_path}" {pan_duration} --width {output_width} --height {output_height}')
                 output = slow_pan_video(
                     input_path,
                     pan_duration,
@@ -2655,7 +2668,7 @@ class VideoEditorGUI:
         def collage_thread():
             try:
                 self.collage_status.set("Creating collage video...")
-
+                print(f'\n[CLI] python cli.py collage "{image_folder}" "{output_path}" --width {canvas_width} --height {canvas_height} --height-min {height_min} --height-max {height_max} --start-rate {start_rate} --end-rate {end_rate} --rotate-left {rotation_left} --rotate-right {rotation_right}')
                 output, duration = create_collage_video(
                     image_folder=image_folder,
                     output_path=output_path,
@@ -2683,6 +2696,203 @@ class VideoEditorGUI:
                 self.root.after(0, lambda msg=error_msg: messagebox.showerror("Error", f"Collage creation failed: {msg}"))
 
         threading.Thread(target=collage_thread, daemon=True).start()
+
+
+    def create_video_inspector_tab(self):
+        tab = tk.Frame(self.content_frame, bg='white')
+        self.add_tab(tab, "Video Inspector")
+
+        # State
+        self.inspector_cap = None
+        self.inspector_total_frames = 0
+        self.inspector_orig_frame = None      # PIL image at native resolution
+        self.inspector_display_scale = 1.0    # canvas-to-native scale factor
+        self.inspector_canvas_offset = (0, 0) # (x, y) pixel offset of image on canvas
+        self.inspector_sel_start = None
+        self.inspector_sel_end = None
+        self.inspector_rect_id = None
+        self.inspector_photo = None
+        self.inspector_region_photo = None
+
+        # ── Top bar ──────────────────────────────────────────────────────────
+        top = tk.Frame(tab, bg='white')
+        top.pack(fill='x', padx=10, pady=(10, 4))
+
+        tk.Button(top, text="Open Video", command=self._inspector_open).pack(side='left', padx=(0, 8))
+        self.inspector_file_label = tk.Label(top, text="No file selected", bg='white', anchor='w')
+        self.inspector_file_label.pack(side='left', fill='x', expand=True)
+
+        # ── Scrubber ─────────────────────────────────────────────────────────
+        scrub_frame = tk.Frame(tab, bg='white')
+        scrub_frame.pack(fill='x', padx=10, pady=(0, 6))
+
+        tk.Label(scrub_frame, text="Frame:", bg='white').pack(side='left')
+        self.inspector_frame_var = tk.IntVar(value=0)
+        self.inspector_scrubber = ttk.Scale(
+            scrub_frame, from_=0, to=0, orient='horizontal',
+            variable=self.inspector_frame_var,
+            command=self._inspector_scrub
+        )
+        self.inspector_scrubber.pack(side='left', fill='x', expand=True, padx=6)
+        self.inspector_frame_label = tk.Label(scrub_frame, text="0 / 0", bg='white', width=12)
+        self.inspector_frame_label.pack(side='left')
+
+        # ── Main area: video canvas + region preview ──────────────────────────
+        main = tk.Frame(tab, bg='white')
+        main.pack(fill='both', expand=True, padx=10, pady=(0, 6))
+
+        # Video canvas (left)
+        canvas_frame = tk.LabelFrame(main, text="Video Frame  (drag to select region)", bg='white')
+        canvas_frame.pack(side='left', fill='both', expand=True)
+
+        self.inspector_canvas = tk.Canvas(canvas_frame, bg='#1a1a1a', cursor='crosshair')
+        self.inspector_canvas.pack(fill='both', expand=True)
+        self.inspector_canvas.bind('<ButtonPress-1>',   self._inspector_sel_start)
+        self.inspector_canvas.bind('<B1-Motion>',       self._inspector_sel_drag)
+        self.inspector_canvas.bind('<ButtonRelease-1>', self._inspector_sel_end)
+        self.inspector_canvas.bind('<Configure>',       self._inspector_redraw)
+
+        # Region preview (right)
+        preview_frame = tk.LabelFrame(main, text="Selected Region", bg='white', width=300)
+        preview_frame.pack(side='right', fill='y', padx=(8, 0))
+        preview_frame.pack_propagate(False)
+
+        self.inspector_region_canvas = tk.Canvas(preview_frame, bg='#1a1a1a', width=280)
+        self.inspector_region_canvas.pack(fill='both', expand=True, padx=4, pady=4)
+
+        # ── Info bar ─────────────────────────────────────────────────────────
+        info_frame = tk.Frame(tab, bg='white')
+        info_frame.pack(fill='x', padx=10, pady=(0, 8))
+        self.inspector_info_var = tk.StringVar(value="No region selected")
+        tk.Label(info_frame, textvariable=self.inspector_info_var, bg='white', anchor='w').pack(side='left')
+
+    # ── Video Inspector helpers ───────────────────────────────────────────────
+
+    def _inspector_open(self):
+        path = filedialog.askopenfilename(
+            title="Select Video",
+            filetypes=[("Video files", "*.mp4 *.webm *.mkv *.avi *.mov"), ("All files", "*.*")]
+        )
+        if not path:
+            return
+        if self.inspector_cap:
+            self.inspector_cap.release()
+        self.inspector_cap = cv2.VideoCapture(path)
+        self.inspector_total_frames = max(1, int(self.inspector_cap.get(cv2.CAP_PROP_FRAME_COUNT)) - 1)
+        self.inspector_scrubber.config(to=self.inspector_total_frames)
+        self.inspector_frame_var.set(0)
+        self.inspector_file_label.config(text=os.path.basename(path))
+        self.inspector_sel_start = None
+        self.inspector_sel_end = None
+        self._inspector_load_frame(0)
+
+    def _inspector_scrub(self, val):
+        idx = int(float(val))
+        self._inspector_load_frame(idx)
+
+    def _inspector_load_frame(self, idx):
+        if not self.inspector_cap:
+            return
+        self.inspector_cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+        ret, frame = self.inspector_cap.read()
+        if not ret:
+            return
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        self.inspector_orig_frame = Image.fromarray(frame_rgb)
+        self.inspector_frame_label.config(text=f"{idx} / {self.inspector_total_frames}")
+        self._inspector_redraw()
+
+    def _inspector_redraw(self, event=None):
+        if self.inspector_orig_frame is None:
+            return
+        canvas = self.inspector_canvas
+        cw, ch = canvas.winfo_width(), canvas.winfo_height()
+        if cw < 2 or ch < 2:
+            return
+
+        fw, fh = self.inspector_orig_frame.size
+        scale = min(cw / fw, ch / fh)
+        dw, dh = int(fw * scale), int(fh * scale)
+        ox, oy = (cw - dw) // 2, (ch - dh) // 2
+
+        self.inspector_display_scale = scale
+        self.inspector_canvas_offset = (ox, oy)
+
+        img = self.inspector_orig_frame.resize((dw, dh), Image.LANCZOS)
+        self.inspector_photo = ImageTk.PhotoImage(img)
+        canvas.delete('all')
+        canvas.create_image(ox, oy, anchor='nw', image=self.inspector_photo)
+
+        # Redraw selection rectangle if present
+        if self.inspector_sel_start and self.inspector_sel_end:
+            x1, y1 = self.inspector_sel_start
+            x2, y2 = self.inspector_sel_end
+            canvas.create_rectangle(x1, y1, x2, y2, outline='#00ff88', width=2, tags='sel')
+        self._inspector_update_region()
+
+    def _canvas_to_frame(self, cx, cy):
+        ox, oy = self.inspector_canvas_offset
+        s = self.inspector_display_scale
+        fw, fh = self.inspector_orig_frame.size
+        fx = max(0, min(fw, int((cx - ox) / s)))
+        fy = max(0, min(fh, int((cy - oy) / s)))
+        return fx, fy
+
+    def _inspector_sel_start(self, event):
+        if self.inspector_orig_frame is None:
+            return
+        self.inspector_sel_start = (event.x, event.y)
+        self.inspector_sel_end = None
+        self.inspector_rect_id = None
+
+    def _inspector_sel_drag(self, event):
+        if self.inspector_sel_start is None:
+            return
+        canvas = self.inspector_canvas
+        if self.inspector_rect_id:
+            canvas.delete(self.inspector_rect_id)
+        x1, y1 = self.inspector_sel_start
+        self.inspector_rect_id = canvas.create_rectangle(
+            x1, y1, event.x, event.y,
+            outline='#00ff88', width=2, tags='sel'
+        )
+        self.inspector_sel_end = (event.x, event.y)
+
+    def _inspector_sel_end(self, event):
+        if self.inspector_sel_start is None:
+            return
+        self.inspector_sel_end = (event.x, event.y)
+        self._inspector_update_region()
+
+    def _inspector_update_region(self):
+        if not (self.inspector_sel_start and self.inspector_sel_end and self.inspector_orig_frame):
+            return
+        x1c, y1c = self.inspector_sel_start
+        x2c, y2c = self.inspector_sel_end
+        fx1, fy1 = self._canvas_to_frame(min(x1c, x2c), min(y1c, y2c))
+        fx2, fy2 = self._canvas_to_frame(max(x1c, x2c), max(y1c, y2c))
+        if fx2 - fx1 < 2 or fy2 - fy1 < 2:
+            return
+
+        region = self.inspector_orig_frame.crop((fx1, fy1, fx2, fy2))
+
+        rc = self.inspector_region_canvas
+        rw, rh = rc.winfo_width(), rc.winfo_height()
+        if rw < 2 or rh < 2:
+            rw, rh = 280, 400
+        rw_img, rh_img = region.size
+        scale = min(rw / rw_img, rh / rh_img, 1.0)  # never upscale beyond native
+        dw, dh = max(1, int(rw_img * scale)), max(1, int(rh_img * scale))
+        resized = region.resize((dw, dh), Image.LANCZOS)
+        self.inspector_region_photo = ImageTk.PhotoImage(resized)
+        ox, oy = (rw - dw) // 2, (rh - dh) // 2
+        rc.delete('all')
+        rc.create_image(ox, oy, anchor='nw', image=self.inspector_region_photo)
+
+        self.inspector_info_var.set(
+            f"Region: ({fx1}, {fy1}) → ({fx2}, {fy2})   "
+            f"Size: {fx2 - fx1} × {fy2 - fy1} px"
+        )
 
 
 if __name__ == "__main__":
