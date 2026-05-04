@@ -1033,7 +1033,7 @@ def cmd_speed(args):
         clip = VideoFileClip(args.input)
         factor = clip.duration / args.duration
         clip.close()
-        print(f"Target duration: {args.duration}s → speed factor: {factor:.2f}x")
+        print(f"Target duration: {args.duration}s -> speed factor: {factor:.2f}x")
     elif args.factor:
         factor = args.factor
     else:
