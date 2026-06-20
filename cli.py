@@ -218,46 +218,36 @@ def crop_video(input_video_path, box, asyncly=False):
 
 
 def get_subclip(input_video_path, start_time, end_time):
-    subclip_start_time = time.time()
+    import subprocess
 
+    subclip_start_time = time.time()
     print(f"Clipping video from {start_time}s to {end_time}s")
 
-    temp_output_path = input_video_path.replace(
-        ".mp4", f"_subclip_temp_{start_time}_{end_time}.mp4"
-    )
+    base, ext = os.path.splitext(input_video_path)
+    temp_output_path = f"{base}_subclip_temp_{start_time}_{end_time}{ext}"
 
-    clip = VideoFileClip(input_video_path)
-    subclip = clip.subclipped(start_time, end_time)
-    subclip.write_videofile(temp_output_path, codec="libx264")
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(start_time),
+        "-to", str(end_time),
+        "-i", input_video_path,
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "18",
+        "-c:a", "aac",
+        "-movflags", "+faststart",
+        temp_output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception(f"ffmpeg error: {result.stderr}")
 
-    # Close both clips to release file handles
-    subclip.close()
-    clip.close()
-
-    # Force garbage collection and wait for file handles to be released
-    import gc
-    import time as time_module
-    gc.collect()
-    time_module.sleep(1.5)
-
-    # Retry logic for file operations
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            if os.path.exists(input_video_path):
-                os.remove(input_video_path)
-            os.rename(temp_output_path, input_video_path)
-            break
-        except PermissionError as e:
-            if attempt < max_retries - 1:
-                print(f"File locked, retrying in 1 second... (attempt {attempt + 1}/{max_retries})")
-                time_module.sleep(1)
-            else:
-                raise Exception(f"Could not access file after {max_retries} attempts. Please close any programs using the video file.") from e
+    if os.path.exists(input_video_path):
+        os.remove(input_video_path)
+    os.rename(temp_output_path, input_video_path)
 
     time_taken = round((time.time() - subclip_start_time), 2)
     print(f"Saved subclip as {os.path.basename(input_video_path)} in {time_taken}s (overwritten)")
-
     return input_video_path
 
 
@@ -275,35 +265,57 @@ def convert_mp4_to_gif(input_video_path):
 
 
 def speed_up_mp4_video(input_video_path, speed_factor: float):
+    import subprocess
+
     start_time = time.time()
+    print(f"Changing speed of {os.path.basename(input_video_path)} by {speed_factor}x")
 
-    temp_output_path = input_video_path.replace(".mp4", f"_sped_temp_{speed_factor}.mp4")
-    clip = VideoFileClip(input_video_path).with_effects([vfx.MultiplySpeed(speed_factor)])
-    clip.write_videofile(temp_output_path, codec="libx264")
-    clip.close()
+    base, ext = os.path.splitext(input_video_path)
+    temp_output_path = f"{base}_sped_temp_{speed_factor}{ext}"
 
-    import gc
-    import time as time_module
-    gc.collect()
-    time_module.sleep(1.5)
+    # Build audio atempo chain — atempo only accepts 0.5..2.0, so chain for extreme factors.
+    def atempo_chain(f):
+        parts = []
+        remaining = f
+        while remaining > 2.0:
+            parts.append("atempo=2.0")
+            remaining /= 2.0
+        while remaining < 0.5:
+            parts.append("atempo=0.5")
+            remaining /= 0.5
+        parts.append(f"atempo={remaining}")
+        return ",".join(parts)
 
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            if os.path.exists(input_video_path):
-                os.remove(input_video_path)
-            os.rename(temp_output_path, input_video_path)
-            break
-        except PermissionError as e:
-            if attempt < max_retries - 1:
-                print(f"File locked, retrying in 1 second... (attempt {attempt + 1}/{max_retries})")
-                time_module.sleep(1)
-            else:
-                raise Exception(f"Could not access file after {max_retries} attempts.") from e
+    # Check if input has audio
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries",
+         "stream=codec_type", "-of", "csv=p=0", input_video_path],
+        capture_output=True, text=True,
+    )
+    has_audio = "audio" in probe.stdout
+
+    cmd = ["ffmpeg", "-y", "-i", input_video_path]
+    if has_audio:
+        cmd += [
+            "-filter_complex",
+            f"[0:v]setpts=PTS/{speed_factor}[v];[0:a]{atempo_chain(speed_factor)}[a]",
+            "-map", "[v]", "-map", "[a]",
+            "-c:a", "aac",
+        ]
+    else:
+        cmd += ["-vf", f"setpts=PTS/{speed_factor}", "-an"]
+    cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "18", temp_output_path]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception(f"ffmpeg error: {result.stderr}")
+
+    if os.path.exists(input_video_path):
+        os.remove(input_video_path)
+    os.rename(temp_output_path, input_video_path)
 
     time_taken = round((time.time() - start_time), 2)
     print(f"Saved sped video as {os.path.basename(input_video_path)} in {time_taken}s (overwritten)")
-
     return input_video_path
 
 
@@ -407,24 +419,29 @@ def mp4_to_mp3(video_path):
 
 
 def mute_video(video_path):
+    import subprocess
+
     print(f"Muting video: {video_path}")
-    clip = VideoFileClip(video_path)
-    audio = clip.audio
-    if audio:
-        audio = audio.volumex(0)
-        temp_output_path = video_path.replace(".mp4", "_muted_temp.mp4")
-        clip.set_audio(audio).write_videofile(temp_output_path, codec="libx264")
-        clip.close()
+    base, ext = os.path.splitext(video_path)
+    temp_output_path = f"{base}_muted_temp{ext}"
 
-        if os.path.exists(video_path):
-            os.remove(video_path)
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-c:v", "copy",
+        "-an",
+        temp_output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception(f"ffmpeg error: {result.stderr}")
 
-        os.rename(temp_output_path, video_path)
-        print(f"Muted video saved (overwritten)")
-        return video_path
-    else:
-        print("No audio track found in the video.")
-        return video_path
+    if os.path.exists(video_path):
+        os.remove(video_path)
+    os.rename(temp_output_path, video_path)
+
+    print(f"Muted video saved as {os.path.basename(video_path)} (overwritten)")
+    return video_path
 
 
 def adjust_brightness_video(video_path, brightness_factor):
