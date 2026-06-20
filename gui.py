@@ -114,6 +114,10 @@ class VideoEditorGUI:
 
     def show_tab(self, index):
         """Show the selected tab"""
+        # Detach any video held by the Video Inspector when leaving its tab
+        if index != getattr(self, 'current_tab_index', None):
+            self._inspector_detach()
+
         # Hide all tabs
         for tab in self.tabs:
             tab.pack_forget()
@@ -2767,6 +2771,30 @@ class VideoEditorGUI:
         tk.Label(info_frame, textvariable=self.inspector_info_var, bg='white', anchor='w').pack(side='left')
 
     # ── Video Inspector helpers ───────────────────────────────────────────────
+
+    def _inspector_detach(self):
+        """Release the open video and reset the inspector to an empty state."""
+        # Guard: may be called before the inspector tab has been built
+        if not hasattr(self, 'inspector_cap'):
+            return
+        if self.inspector_cap:
+            self.inspector_cap.release()
+        self.inspector_cap = None
+        self.inspector_total_frames = 0
+        self.inspector_orig_frame = None
+        self.inspector_sel_start = None
+        self.inspector_sel_end = None
+        self.inspector_rect_id = None
+        self.inspector_photo = None
+        self.inspector_region_photo = None
+        # Reset widgets if they exist
+        self.inspector_canvas.delete('all')
+        self.inspector_region_canvas.delete('all')
+        self.inspector_scrubber.config(to=0)
+        self.inspector_frame_var.set(0)
+        self.inspector_frame_label.config(text="0 / 0")
+        self.inspector_file_label.config(text="No file selected")
+        self.inspector_info_var.set("No region selected")
 
     def _inspector_open(self):
         path = filedialog.askopenfilename(
